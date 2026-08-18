@@ -379,6 +379,13 @@
   .cal-mini{ max-width:348px; }
   .cal-mini .cal-grid{ gap:4px; }
   .cal-mini .cal-day{ font-size:12.5px; border-radius:7px; }
+  /* ===== Modal de confirmação (incluir/alterar/excluir) ===== */
+  .modalbg{ position:fixed; inset:0; background:rgba(10,18,36,.55); z-index:300; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .modalcard{ background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:20px 22px; max-width:440px; width:100%; max-height:80vh; overflow:auto; }
+  .modalcard h3{ font-family:var(--display); font-weight:700; font-size:17px; margin:0 0 13px; }
+  .modal-linhas{ margin:0 0 18px; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:6px; }
+  .modal-linhas li{ font-size:13.5px; color:var(--ink); padding:8px 11px; background:var(--bg); border-radius:8px; border:1px solid var(--line); }
+  .modal-actions{ display:flex; gap:8px; justify-content:flex-end; }
 </style>
 </head>
 <body>
@@ -556,6 +563,7 @@ let movendo=null;
 let subAba={eventos:'eventos', restricoes:'marcar'};
 let dispMes=null, dispRef=null;   /* disponibilidades puxadas do formulário (mês corrente) */
 let _gravando=false;              /* trava anti duplo-clique: uma gravação por vez */
+let confirmPendente=null;         /* {titulo,linhas,fn,cor} - modal de confirmar incluir/alterar/excluir */
 
 /* ---------- Persistência ---------- */
 const SKEY='liturgia_v2';   /* nova chave: o app começa do zero */
@@ -617,11 +625,22 @@ function atribuicoesDoMes(){
 function setMes(ano, mes){ selAno=ano; selMes=mes; selecionados.clear(); const chave=chaveMes(ano,mes); escalaAtual = db.escalasSalvas[chave] ? {chave, atribuicoes:JSON.parse(JSON.stringify(db.escalasSalvas[chave].atribuicoes))} : null; render(); }
 function navMes(delta){ const d=new Date(selAno,selMes+delta,1); setMes(d.getFullYear(),d.getMonth()); }
 function gerar(){ movendo=null; const chave=chaveMes(selAno,selMes); const occs=construirOccs(selAno,selMes); escalaAtual={chave,atribuicoes:alocar(occs,selAno,selMes,chave)}; render(); toast('Escala gerada'); }
-async function salvarEscala(){ if(_gravando) return; _gravando=true; try{ if(!escalaAtual) return; db.escalasSalvas[chaveMes(selAno,selMes)]={atribuicoes:JSON.parse(JSON.stringify(escalaAtual.atribuicoes))}; await salvar(); render(); toast('Escala do mês salva'); } finally { _gravando=false; } }
+function salvarEscala(){
+  if(!escalaAtual) return;
+  const qtd=Object.values(escalaAtual.atribuicoes).reduce((s,a)=>s+a.length,0);
+  pedirConfirmacao(`Salvar escala de ${MESES[selMes]} ${selAno}`, [`${qtd} atribuição(ões) serão gravadas.`, 'Isso conta no rodízio dos próximos meses.'], async ()=>{
+    if(_gravando) return; _gravando=true; try{ db.escalasSalvas[chaveMes(selAno,selMes)]={atribuicoes:JSON.parse(JSON.stringify(escalaAtual.atribuicoes))}; await salvar(); render(); toast('Escala do mês salva'); } finally { _gravando=false; }
+  });
+}
 function garantirEscalaAtual(){ const chave=chaveMes(selAno,selMes); if(!escalaAtual||escalaAtual.chave!==chave) escalaAtual={chave,atribuicoes:{}}; return escalaAtual; }
 function removerSlot(k,id){ const ea=garantirEscalaAtual(); ea.atribuicoes[k]=(ea.atribuicoes[k]||[]).filter(x=>x!==id); render(); }
 function addSlot(k,id){ if(!id) return; const ea=garantirEscalaAtual(); ea.atribuicoes[k]=[...(ea.atribuicoes[k]||[]),id]; render(); }
-async function cancelarOcc(ev,data){ db.excecoes.push({id:uid(),eventoId:ev,data,acao:'cancelar'}); if(escalaAtual) delete escalaAtual.atribuicoes[`${ev}|${data}`]; selecionados.delete(`${ev}|${data}`); await salvar(); render(); }
+function cancelarOcc(ev,data){
+  const evento=db.eventos.find(x=>x.id===ev); const f=formatData(data);
+  pedirConfirmacao('Remover este dia da escala', [`${evento?evento.tipo:''} · ${f.semFull} ${f.dm}`, 'O evento continua nos outros dias — só este fica cancelado.'], async ()=>{
+    db.excecoes.push({id:uid(),eventoId:ev,data,acao:'cancelar'}); if(escalaAtual) delete escalaAtual.atribuicoes[`${ev}|${data}`]; selecionados.delete(`${ev}|${data}`); await salvar(); render(); toast('Dia removido');
+  }, 'red');
+}
 async function restaurarOcc(ev,data){ db.excecoes=db.excecoes.filter(e=>!(e.eventoId===ev&&e.data===data&&e.acao==='cancelar')); await salvar(); render(); }
 function toggleSel(k){ if(selecionados.has(k)) selecionados.delete(k); else selecionados.add(k); render(); }
 function limparSel(){ selecionados.clear(); render(); }
@@ -629,27 +648,69 @@ function irEditar(tab,id){ edit[tab]=id; render(); window.scrollTo({top:0,behavi
 function cancelEdit(tab){ edit[tab]=null; render(); }
 
 /* Membros */
-async function salvarMembro(){ if(_gravando) return; _gravando=true; try{ const nome=(gv('campo-membro')||'').trim(); if(!nome) return;
-  if(edit.membros){ const m=db.membros.find(x=>x.id===edit.membros); if(m) m.nome=nome; edit.membros=null; toast('Membro atualizado'); }
-  else { db.membros.push({id:uid(),nome,ativo:true}); focusApos='campo-membro'; }
-  await salvar(); render(); } finally { _gravando=false; } }
+function salvarMembro(){
+  const nome=(gv('campo-membro')||'').trim(); if(!nome) return;
+  if(edit.membros){
+    const m=db.membros.find(x=>x.id===edit.membros); const antigo=m?m.nome:'';
+    pedirConfirmacao('Salvar alterações do membro', [`${antigo} → ${nome}`], async ()=>{
+      if(_gravando) return; _gravando=true; try{ if(m) m.nome=nome; edit.membros=null; await salvar(); render(); toast('Membro atualizado'); } finally { _gravando=false; }
+    });
+  } else {
+    pedirConfirmacao('Cadastrar novo membro', [nome], async ()=>{
+      if(_gravando) return; _gravando=true; try{ db.membros.push({id:uid(),nome,ativo:true}); focusApos='campo-membro'; await salvar(); render(); toast('Membro cadastrado'); } finally { _gravando=false; }
+    });
+  }
+}
 async function toggleAtivo(id){ const m=db.membros.find(x=>x.id===id); if(m){ m.ativo=!m.ativo; await salvar(); render(); } }
 async function setAjuste(id,v){ db.ajustes[id]=Math.max(0,parseInt(v,10)||0); await salvar(); }
-async function delMembro(id){ db.membros=db.membros.filter(m=>m.id!==id); db.restricoes=db.restricoes.filter(r=>r.membroId!==id); delete db.ajustes[id]; if(edit.membros===id) edit.membros=null; if(restricaoMembro===id) restricaoMembro=null; await salvar(); render(); }
+function delMembro(id){
+  const m=db.membros.find(x=>x.id===id); if(!m) return;
+  pedirConfirmacao('Excluir membro', [m.nome, 'Também remove as restrições cadastradas dele.'], async ()=>{
+    db.membros=db.membros.filter(x=>x.id!==id); db.restricoes=db.restricoes.filter(r=>r.membroId!==id); delete db.ajustes[id]; if(edit.membros===id) edit.membros=null; if(restricaoMembro===id) restricaoMembro=null; await salvar(); render(); toast('Membro excluído');
+  }, 'red');
+}
 
 /* Locais */
-async function salvarLocal(){ if(_gravando) return; _gravando=true; try{ const nome=(gv('campo-local')||'').trim(); if(!nome) return;
-  if(edit.locais){ const l=db.locais.find(x=>x.id===edit.locais); if(l) l.nome=nome; edit.locais=null; toast('Local atualizado'); }
-  else { db.locais.push({id:uid(),nome}); focusApos='campo-local'; }
-  await salvar(); render(); } finally { _gravando=false; } }
-async function delLocal(id){ if(db.eventos.some(e=>e.localId===id)){ toast('Há eventos usando este local'); return; } db.locais=db.locais.filter(l=>l.id!==id); if(edit.locais===id) edit.locais=null; await salvar(); render(); }
+function salvarLocal(){
+  const nome=(gv('campo-local')||'').trim(); if(!nome) return;
+  if(edit.locais){
+    const l=db.locais.find(x=>x.id===edit.locais); const antigo=l?l.nome:'';
+    pedirConfirmacao('Salvar alterações do local', [`${antigo} → ${nome}`], async ()=>{
+      if(_gravando) return; _gravando=true; try{ if(l) l.nome=nome; edit.locais=null; await salvar(); render(); toast('Local atualizado'); } finally { _gravando=false; }
+    });
+  } else {
+    pedirConfirmacao('Cadastrar novo local', [nome], async ()=>{
+      if(_gravando) return; _gravando=true; try{ db.locais.push({id:uid(),nome}); focusApos='campo-local'; await salvar(); render(); toast('Local cadastrado'); } finally { _gravando=false; }
+    });
+  }
+}
+function delLocal(id){
+  if(db.eventos.some(e=>e.localId===id)){ toast('Há eventos usando este local'); return; }
+  const l=db.locais.find(x=>x.id===id); if(!l) return;
+  pedirConfirmacao('Excluir local', [l.nome], async ()=>{
+    db.locais=db.locais.filter(x=>x.id!==id); if(edit.locais===id) edit.locais=null; await salvar(); render(); toast('Local excluído');
+  }, 'red');
+}
 
 /* Tipos */
-async function salvarTipo(){ if(_gravando) return; _gravando=true; try{ const t=(gv('campo-tipo')||'').trim(); if(!t) return;
-  if(edit.tipos!=null){ const old=edit.tipos; const idx=db.tipos.indexOf(old); if(idx>=0) db.tipos[idx]=t; db.eventos.forEach(e=>{ if(e.tipo===old) e.tipo=t; }); edit.tipos=null; toast('Tipo atualizado'); }
-  else { if(!db.tipos.includes(t)) db.tipos.push(t); focusApos='campo-tipo'; }
-  const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); } finally { _gravando=false; } }
-async function delTipo(t){ db.tipos=db.tipos.filter(x=>x!==t); if(edit.tipos===t) edit.tipos=null; await salvar(); render(); }
+function salvarTipo(){
+  const t=(gv('campo-tipo')||'').trim(); if(!t) return;
+  if(edit.tipos!=null){
+    const old=edit.tipos;
+    pedirConfirmacao('Salvar alterações do tipo', [`${old} → ${t}`, 'Eventos que usam este tipo são atualizados também.'], async ()=>{
+      if(_gravando) return; _gravando=true; try{ const idx=db.tipos.indexOf(old); if(idx>=0) db.tipos[idx]=t; db.eventos.forEach(e=>{ if(e.tipo===old) e.tipo=t; }); edit.tipos=null; const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); toast('Tipo atualizado'); } finally { _gravando=false; }
+    });
+  } else {
+    pedirConfirmacao('Cadastrar novo tipo', [t], async ()=>{
+      if(_gravando) return; _gravando=true; try{ if(!db.tipos.includes(t)) db.tipos.push(t); focusApos='campo-tipo'; const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); toast('Tipo cadastrado'); } finally { _gravando=false; }
+    });
+  }
+}
+function delTipo(t){
+  pedirConfirmacao('Excluir tipo', [t], async ()=>{
+    db.tipos=db.tipos.filter(x=>x!==t); if(edit.tipos===t) edit.tipos=null; await salvar(); render(); toast('Tipo excluído');
+  }, 'red');
+}
 function opcoesTipo(sel){ return `<option value="" disabled ${sel?'':'selected'}>— escolha o tipo —</option>`+db.tipos.map(t=>`<option ${sel===t?'selected':''}>${esc(t)}</option>`).join('')+`<option value="__novo__">➕ Cadastrar novo tipo…</option>`; }
 async function criarTipoInline(){
   if(_gravando) return; _gravando=true; try{
@@ -671,18 +732,27 @@ function setRestricaoMembro(id){ restricaoMembro=id||null; restricoesPendentes=[
 function calNav(delta){ if(restricaoCalAno==null){ restricaoCalAno=selAno; restricaoCalMes=selMes; } const d=new Date(restricaoCalAno, restricaoCalMes+delta, 1); restricaoCalAno=d.getFullYear(); restricaoCalMes=d.getMonth(); render(); }
 function toggleDiaRestricao(ds){ if(!restricaoMembro) return; if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===ds)) return; if(restricoesPendentes.includes(ds)) restricoesPendentes=restricoesPendentes.filter(x=>x!==ds); else restricoesPendentes.push(ds); render(); }
 function remDataPendente(d){ restricoesPendentes=restricoesPendentes.filter(x=>x!==d); render(); }
-async function salvarRestricoes(){
-  if(_gravando) return; _gravando=true; try{
+function salvarRestricoes(){
   if(!restricaoMembro){ toast('Escolha o membro'); return; }
   if(!restricoesPendentes.length){ toast('Marque ao menos uma data'); return; }
-  let add=0,dup=0;
-  for(const d of restricoesPendentes){ if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===d)){ dup++; continue; } db.restricoes.push({id:uid(),membroId:restricaoMembro,data:d}); add++; }
-  const nome=nomeMembro(restricaoMembro); restricoesPendentes=[];
-  await salvar(); render(); toast(`${add} restrição(ões) para ${nome}${dup?` · ${dup} já existia(m)`:''}`);
-  } finally { _gravando=false; }
+  const nome=nomeMembro(restricaoMembro);
+  const linhas=restricoesPendentes.slice().sort().map(d=>formatData(d).dmy);
+  pedirConfirmacao(`Marcar restrição para ${nome}`, linhas, async ()=>{
+    if(_gravando) return; _gravando=true; try{
+      let add=0,dup=0;
+      for(const d of restricoesPendentes){ if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===d)){ dup++; continue; } db.restricoes.push({id:uid(),membroId:restricaoMembro,data:d}); add++; }
+      restricoesPendentes=[];
+      await salvar(); render(); toast(`${add} restrição(ões) para ${nome}${dup?` · ${dup} já existia(m)`:''}`);
+    } finally { _gravando=false; }
+  });
 }
 function addMaisRestricoes(mid){ restricaoMembro=mid; restricoesPendentes=[]; render(); window.scrollTo({top:0,behavior:'smooth'}); }
-async function delRestricao(id){ db.restricoes=db.restricoes.filter(r=>r.id!==id); await salvar(); render(); }
+function delRestricao(id){
+  const r=db.restricoes.find(x=>x.id===id); if(!r) return;
+  pedirConfirmacao('Remover restrição', [`${nomeMembro(r.membroId)} — ${formatData(r.data).dmy}`], async ()=>{
+    db.restricoes=db.restricoes.filter(x=>x.id!==id); await salvar(); render(); toast('Restrição removida');
+  }, 'red');
+}
 
 /* Eventos */
 function lerFormEvento(){
@@ -704,15 +774,33 @@ function lerFormEvento(){
   const elig=[...document.querySelectorAll('[data-elig]:checked')].map(c=>c.value); if(elig.length) ev.elegiveis=elig;
   return ev;
 }
-async function salvarEvento(){
-  if(_gravando) return; _gravando=true; try{
+function resumoEvento(d){
+  const linhas=[`${d.tipo} · ${nomeLocal(d.localId)}`, recorrenciaTexto(d)];
+  if(d.horario) linhas.push(`${intervalo({horario:d.horario,duracao:d.duracao})}${d.horarioChegada?` · chegar ${d.horarioChegada}`:''}`);
+  linhas.push(`${d.vagas} ${d.vagas>1?'pessoas':'pessoa'}`);
+  if(d.obs) linhas.push(`Obs: ${d.obs}`);
+  if(d.elegiveis&&d.elegiveis.length) linhas.push(`Só: ${d.elegiveis.map(nomeMembro).join(', ')}`);
+  return linhas;
+}
+function salvarEvento(){
   const d=lerFormEvento(); if(!d) return;
   const dupId=edit.eventos||null;
   if(db.eventos.some(x=> x.id!==dupId && x.tipo===d.tipo && x.localId===d.localId && (x.horario||'')===(d.horario||''))){ toast('Já existe um evento com o mesmo tipo, local e horário'); return; }
-  if(edit.eventos){ const ev=db.eventos.find(x=>x.id===edit.eventos); if(ev){ const keep=ev.id; for(const k of Object.keys(ev)) delete ev[k]; Object.assign(ev,{id:keep},d); } edit.eventos=null; toast('Evento atualizado'); }
-  else { db.eventos.push({id:uid(),...d}); toast('Evento cadastrado'); }
-  await salvar(); render(); } finally { _gravando=false; } }
-async function delEvento(id){ db.eventos=db.eventos.filter(e=>e.id!==id); db.excecoes=db.excecoes.filter(e=>e.eventoId!==id); if(edit.eventos===id) edit.eventos=null; await salvar(); render(); }
+  const editando=!!edit.eventos;
+  pedirConfirmacao(editando?'Salvar alterações do evento':'Cadastrar novo evento', resumoEvento(d), async ()=>{
+    if(_gravando) return; _gravando=true; try{
+      if(editando){ const ev=db.eventos.find(x=>x.id===edit.eventos); if(ev){ const keep=ev.id; for(const k of Object.keys(ev)) delete ev[k]; Object.assign(ev,{id:keep},d); } edit.eventos=null; toast('Evento atualizado'); }
+      else { db.eventos.push({id:uid(),...d}); toast('Evento cadastrado'); }
+      await salvar(); render();
+    } finally { _gravando=false; }
+  });
+}
+function delEvento(id){
+  const ev=db.eventos.find(x=>x.id===id); if(!ev) return;
+  pedirConfirmacao('Excluir evento', [`${ev.tipo} · ${nomeLocal(ev.localId)}`, recorrenciaTexto(ev), 'Remove também as exceções (dias cancelados) deste evento.'], async ()=>{
+    db.eventos=db.eventos.filter(x=>x.id!==id); db.excecoes=db.excecoes.filter(e=>e.eventoId!==id); if(edit.eventos===id) edit.eventos=null; await salvar(); render(); toast('Evento excluído');
+  }, 'red');
+}
 
 /* =========================================================================
    PLANILHA EXCEL — exportar disponibilidade e importar restrições
@@ -874,7 +962,8 @@ function render(){
       ${confirmReset
         ? `<span class="tiny" style="display:inline-flex; gap:8px; align-items:center; flex-wrap:wrap">Descartar alterações locais e recarregar do servidor? <button class="btn ghost" data-action="confirmarReset" style="padding:6px 12px">Sim, recarregar</button><button class="btn ghost" data-action="cancelReset" style="padding:6px 12px">Cancelar</button></span>`
         : `<span style="display:inline-flex;gap:14px;align-items:center;flex-wrap:wrap"><button class="linkbtn" data-action="pedirReset" style="color:var(--sub);display:inline-flex;align-items:center;gap:6px">${ico('rotate')} Recarregar da nuvem</button><button class="linkbtn" data-action="trocarSenha" style="color:var(--sub)">Trocar senha</button><button class="linkbtn" data-action="logout" style="color:var(--sub)">Sair</button></span>`}
-    </footer>`;
+    </footer>
+    ${modalConfirmacao()}`;
   if(document.getElementById('ev-freq')) atualizarRecorrencia();
   if(focusApos){ const el=document.getElementById(focusApos); if(el) el.focus(); focusApos=null; }
 }
@@ -1162,6 +1251,24 @@ function sincronizarDiaSemana(dateStr){ if(!dateStr) return; const wd=dataPartes
 
 /* ---------- Toast + atualização parcial de lista ---------- */
 function toast(msg){ const t=document.getElementById('toast'); if(!t) return; t.innerHTML=`${ico('check')}<span>${esc(msg)}</span>`; t.classList.add('show'); clearTimeout(window.__toastT); window.__toastT=setTimeout(()=>t.classList.remove('show'),2600); }
+
+/* ---------- Confirmação genérica: incluir / alterar / excluir ---------- */
+function pedirConfirmacao(titulo, linhas, fn, cor){ confirmPendente={titulo, linhas, fn, cor:cor||'primary'}; render(); }
+function cancelarConfirmacao(){ confirmPendente=null; render(); }
+async function confirmarPendente(){ if(!confirmPendente) return; const fn=confirmPendente.fn; confirmPendente=null; render(); await fn(); }
+function modalConfirmacao(){
+  if(!confirmPendente) return '';
+  const { titulo, linhas, cor } = confirmPendente;
+  const corBtn = cor==='red' ? 'style="background:var(--red);border-color:var(--red);color:#fff"' : '';
+  return `<div class="modalbg"><div class="modalcard">
+      <h3>${esc(titulo)}</h3>
+      <ul class="modal-linhas">${linhas.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>
+      <div class="modal-actions">
+        <button class="btn ghost" data-action="cancelarConfirmacao">Cancelar</button>
+        <button class="btn primary" ${corBtn} data-action="confirmarPendente">Confirmar</button>
+      </div>
+    </div></div>`;
+}
 function atualizarLista(tab){ const map={membros:['lista-membros',listaMembros],locais:['lista-locais',listaLocais],eventos:['lista-eventos',listaEventos],restricoes:['lista-restricoes',listaRestricoes]}; const m=map[tab]; if(!m) return; const el=document.getElementById(m[0]); if(el) el.innerHTML=m[1](); }
 
 /* ---------- Listeners delegados (anexados uma vez) ---------- */
@@ -1170,6 +1277,8 @@ document.addEventListener('click', e=>{
   const id=el.getAttribute('data-id'), occ=el.getAttribute('data-occ'), ev=el.getAttribute('data-ev'), data=el.getAttribute('data-data'), tab=el.getAttribute('data-tab'), t=el.getAttribute('data-t'), mid=el.getAttribute('data-mid'), modo=el.getAttribute('data-modo');
   switch(a){
     case 'tema': alternarTema(); break;
+    case 'cancelarConfirmacao': cancelarConfirmacao(); break;
+    case 'confirmarPendente': confirmarPendente(); break;
     case 'aba': abaAtiva=id; movendo=null; render(); break;
     case 'subaba': { const g=el.getAttribute('data-grupo'); if(g) subAba[g]=id; render(); break; }
     case 'mesPrev': navMes(-1); break;
@@ -1705,13 +1814,40 @@ function listaFases(){
     </div>`;
   }).join('');
 }
-async function salvarFase(){ if(_gravando) return; _gravando=true; try{ const nome=(gv('campo-fase')||'').trim(); if(!nome) return; if(!db.fases) db.fases=[];
-  if(edit.fases){ const fa=db.fases.find(x=>x.id===edit.fases); if(fa) fa.nome=nome; edit.fases=null; }
-  else { db.fases.push({id:uid(), nome, datas:[]}); focusApos='campo-fase'; }
-  await salvar(); render(); } finally { _gravando=false; } }
-async function delFase(id){ if(!db.fases) return; db.fases=db.fases.filter(f=>f.id!==id); db.membros.forEach(m=>{ if(m.faseId===id) m.faseId=null; }); if(edit.fases===id) edit.fases=null; await salvar(); render(); toast('Fase removida'); }
-async function addFaseData(id){ if(_gravando) return; _gravando=true; try{ const d=gv('fdata-'+id); if(!d){ toast('Escolha uma data'); return; } const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return; if(!fa.datas) fa.datas=[]; if(fa.datas.includes(d)){ toast('Essa data já está cadastrada'); return; } fa.datas.push(d); await salvar(); render(); } finally { _gravando=false; } }
-async function delFaseData(id,data){ const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return; fa.datas=(fa.datas||[]).filter(x=>x!==data); await salvar(); render(); }
+function salvarFase(){
+  const nome=(gv('campo-fase')||'').trim(); if(!nome) return; if(!db.fases) db.fases=[];
+  if(edit.fases){
+    const fa=db.fases.find(x=>x.id===edit.fases); const antigo=fa?fa.nome:'';
+    pedirConfirmacao('Salvar alterações da fase', [`${antigo} → ${nome}`], async ()=>{
+      if(_gravando) return; _gravando=true; try{ if(fa) fa.nome=nome; edit.fases=null; await salvar(); render(); toast('Fase atualizada'); } finally { _gravando=false; }
+    });
+  } else {
+    pedirConfirmacao('Cadastrar nova fase', [nome], async ()=>{
+      if(_gravando) return; _gravando=true; try{ db.fases.push({id:uid(), nome, datas:[]}); focusApos='campo-fase'; await salvar(); render(); toast('Fase cadastrada'); } finally { _gravando=false; }
+    });
+  }
+}
+function delFase(id){
+  if(!db.fases) return; const fa=db.fases.find(x=>x.id===id); if(!fa) return;
+  const nMembros=db.membros.filter(m=>m.faseId===id).length;
+  pedirConfirmacao('Excluir fase', [fa.nome, nMembros?`${nMembros} membro(s) ficarão sem fase.`:'Nenhum membro vinculado.'], async ()=>{
+    db.fases=db.fases.filter(x=>x.id!==id); db.membros.forEach(m=>{ if(m.faseId===id) m.faseId=null; }); if(edit.fases===id) edit.fases=null; await salvar(); render(); toast('Fase removida');
+  }, 'red');
+}
+function addFaseData(id){
+  const d=gv('fdata-'+id); if(!d){ toast('Escolha uma data'); return; }
+  const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return;
+  if((fa.datas||[]).includes(d)){ toast('Essa data já está cadastrada'); return; }
+  pedirConfirmacao(`Adicionar data de formação — ${fa.nome}`, [formatData(d).dmy], async ()=>{
+    if(_gravando) return; _gravando=true; try{ if(!fa.datas) fa.datas=[]; fa.datas.push(d); await salvar(); render(); toast('Data adicionada'); } finally { _gravando=false; }
+  });
+}
+function delFaseData(id,data){
+  const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return;
+  pedirConfirmacao('Remover data de formação', [`${fa.nome} — ${formatData(data).dmy}`], async ()=>{
+    fa.datas=(fa.datas||[]).filter(x=>x!==data); await salvar(); render(); toast('Data removida');
+  }, 'red');
+}
 async function setMembroFase(id, faseId){ const m=db.membros.find(x=>x.id===id); if(!m) return; m.faseId=faseId||null; await salvar(); render(); }
 
 /* ---------- Puxar disponibilidades (formulário -> motor) ---------- */
