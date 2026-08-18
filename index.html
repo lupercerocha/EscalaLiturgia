@@ -572,7 +572,7 @@ async function carregar(){ try{ db=await sbCarregar(); return true; }catch(e){ c
 
 /* ---------- Tema ---------- */
 function aplicarTema(){ let t=db&&db.tema; if(!t){ t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'; } document.documentElement.setAttribute('data-theme', t); }
-async function alternarTema(){ const a=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; db.tema=a==='dark'?'light':'dark'; aplicarTema(); await salvar(); render(); }
+function alternarTema(){ const a=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; db.tema=a==='dark'?'light':'dark'; aplicarTema(); render(); salvar(); }
 
 /* ---------- Banco vazio / reset ---------- */
 function seed(){ return { membros:[], locais:[], tipos:['Adoração','Missa','Batizado','Terço'], eventos:[], restricoes:[], fases:[], excecoes:[], ajustes:{}, escalasSalvas:{}, tema:null }; }
@@ -628,8 +628,9 @@ function gerar(){ movendo=null; const chave=chaveMes(selAno,selMes); const occs=
 function salvarEscala(){
   if(!escalaAtual) return;
   const qtd=Object.values(escalaAtual.atribuicoes).reduce((s,a)=>s+a.length,0);
-  pedirConfirmacao(`Salvar escala de ${MESES[selMes]} ${selAno}`, [`${qtd} atribuição(ões) serão gravadas.`, 'Isso conta no rodízio dos próximos meses.'], async ()=>{
-    if(_gravando) return; _gravando=true; try{ db.escalasSalvas[chaveMes(selAno,selMes)]={atribuicoes:JSON.parse(JSON.stringify(escalaAtual.atribuicoes))}; await salvar(); render(); toast('Escala do mês salva'); } finally { _gravando=false; }
+  pedirConfirmacao(`Salvar escala de ${MESES[selMes]} ${selAno}`, [`${qtd} atribuição(ões) serão gravadas.`, 'Isso conta no rodízio dos próximos meses.'], ()=>{
+    db.escalasSalvas[chaveMes(selAno,selMes)]={atribuicoes:JSON.parse(JSON.stringify(escalaAtual.atribuicoes))};
+    render(); toast('Escala do mês salva'); salvar();
   });
 }
 function garantirEscalaAtual(){ const chave=chaveMes(selAno,selMes); if(!escalaAtual||escalaAtual.chave!==chave) escalaAtual={chave,atribuicoes:{}}; return escalaAtual; }
@@ -637,11 +638,12 @@ function removerSlot(k,id){ const ea=garantirEscalaAtual(); ea.atribuicoes[k]=(e
 function addSlot(k,id){ if(!id) return; const ea=garantirEscalaAtual(); ea.atribuicoes[k]=[...(ea.atribuicoes[k]||[]),id]; render(); }
 function cancelarOcc(ev,data){
   const evento=db.eventos.find(x=>x.id===ev); const f=formatData(data);
-  pedirConfirmacao('Remover este dia da escala', [`${evento?evento.tipo:''} · ${f.semFull} ${f.dm}`, 'O evento continua nos outros dias — só este fica cancelado.'], async ()=>{
-    db.excecoes.push({id:uid(),eventoId:ev,data,acao:'cancelar'}); if(escalaAtual) delete escalaAtual.atribuicoes[`${ev}|${data}`]; selecionados.delete(`${ev}|${data}`); await salvar(); render(); toast('Dia removido');
+  pedirConfirmacao('Remover este dia da escala', [`${evento?evento.tipo:''} · ${f.semFull} ${f.dm}`, 'O evento continua nos outros dias — só este fica cancelado.'], ()=>{
+    db.excecoes.push({id:uid(),eventoId:ev,data,acao:'cancelar'}); if(escalaAtual) delete escalaAtual.atribuicoes[`${ev}|${data}`]; selecionados.delete(`${ev}|${data}`);
+    render(); toast('Dia removido'); salvar();
   }, 'red');
 }
-async function restaurarOcc(ev,data){ db.excecoes=db.excecoes.filter(e=>!(e.eventoId===ev&&e.data===data&&e.acao==='cancelar')); await salvar(); render(); }
+function restaurarOcc(ev,data){ db.excecoes=db.excecoes.filter(e=>!(e.eventoId===ev&&e.data===data&&e.acao==='cancelar')); render(); salvar(); }
 function toggleSel(k){ if(selecionados.has(k)) selecionados.delete(k); else selecionados.add(k); render(); }
 function limparSel(){ selecionados.clear(); render(); }
 function irEditar(tab,id){ edit[tab]=id; render(); window.scrollTo({top:0,behavior:'smooth'}); }
@@ -652,21 +654,24 @@ function salvarMembro(){
   const nome=(gv('campo-membro')||'').trim(); if(!nome) return;
   if(edit.membros){
     const m=db.membros.find(x=>x.id===edit.membros); const antigo=m?m.nome:'';
-    pedirConfirmacao('Salvar alterações do membro', [`${antigo} → ${nome}`], async ()=>{
-      if(_gravando) return; _gravando=true; try{ if(m) m.nome=nome; edit.membros=null; await salvar(); render(); toast('Membro atualizado'); } finally { _gravando=false; }
+    pedirConfirmacao('Salvar alterações do membro', [`${antigo} → ${nome}`], ()=>{
+      if(m) m.nome=nome; edit.membros=null;
+      render(); toast('Membro atualizado'); salvar();
     });
   } else {
-    pedirConfirmacao('Cadastrar novo membro', [nome], async ()=>{
-      if(_gravando) return; _gravando=true; try{ db.membros.push({id:uid(),nome,ativo:true}); focusApos='campo-membro'; await salvar(); render(); toast('Membro cadastrado'); } finally { _gravando=false; }
-    });
+    if(_gravando) return; _gravando=true;
+    db.membros.push({id:uid(),nome,ativo:true}); focusApos='campo-membro';
+    render(); toast('Membro cadastrado'); salvar();
+    _gravando=false;
   }
 }
-async function toggleAtivo(id){ const m=db.membros.find(x=>x.id===id); if(m){ m.ativo=!m.ativo; await salvar(); render(); } }
-async function setAjuste(id,v){ db.ajustes[id]=Math.max(0,parseInt(v,10)||0); await salvar(); }
+function toggleAtivo(id){ const m=db.membros.find(x=>x.id===id); if(m){ m.ativo=!m.ativo; render(); salvar(); } }
+function setAjuste(id,v){ db.ajustes[id]=Math.max(0,parseInt(v,10)||0); salvar(); }
 function delMembro(id){
   const m=db.membros.find(x=>x.id===id); if(!m) return;
-  pedirConfirmacao('Excluir membro', [m.nome, 'Também remove as restrições cadastradas dele.'], async ()=>{
-    db.membros=db.membros.filter(x=>x.id!==id); db.restricoes=db.restricoes.filter(r=>r.membroId!==id); delete db.ajustes[id]; if(edit.membros===id) edit.membros=null; if(restricaoMembro===id) restricaoMembro=null; await salvar(); render(); toast('Membro excluído');
+  pedirConfirmacao('Excluir membro', [m.nome, 'Também remove as restrições cadastradas dele.'], ()=>{
+    db.membros=db.membros.filter(x=>x.id!==id); db.restricoes=db.restricoes.filter(r=>r.membroId!==id); delete db.ajustes[id]; if(edit.membros===id) edit.membros=null; if(restricaoMembro===id) restricaoMembro=null;
+    render(); toast('Membro excluído'); salvar();
   }, 'red');
 }
 
@@ -675,20 +680,23 @@ function salvarLocal(){
   const nome=(gv('campo-local')||'').trim(); if(!nome) return;
   if(edit.locais){
     const l=db.locais.find(x=>x.id===edit.locais); const antigo=l?l.nome:'';
-    pedirConfirmacao('Salvar alterações do local', [`${antigo} → ${nome}`], async ()=>{
-      if(_gravando) return; _gravando=true; try{ if(l) l.nome=nome; edit.locais=null; await salvar(); render(); toast('Local atualizado'); } finally { _gravando=false; }
+    pedirConfirmacao('Salvar alterações do local', [`${antigo} → ${nome}`], ()=>{
+      if(l) l.nome=nome; edit.locais=null;
+      render(); toast('Local atualizado'); salvar();
     });
   } else {
-    pedirConfirmacao('Cadastrar novo local', [nome], async ()=>{
-      if(_gravando) return; _gravando=true; try{ db.locais.push({id:uid(),nome}); focusApos='campo-local'; await salvar(); render(); toast('Local cadastrado'); } finally { _gravando=false; }
-    });
+    if(_gravando) return; _gravando=true;
+    db.locais.push({id:uid(),nome}); focusApos='campo-local';
+    render(); toast('Local cadastrado'); salvar();
+    _gravando=false;
   }
 }
 function delLocal(id){
   if(db.eventos.some(e=>e.localId===id)){ toast('Há eventos usando este local'); return; }
   const l=db.locais.find(x=>x.id===id); if(!l) return;
-  pedirConfirmacao('Excluir local', [l.nome], async ()=>{
-    db.locais=db.locais.filter(x=>x.id!==id); if(edit.locais===id) edit.locais=null; await salvar(); render(); toast('Local excluído');
+  pedirConfirmacao('Excluir local', [l.nome], ()=>{
+    db.locais=db.locais.filter(x=>x.id!==id); if(edit.locais===id) edit.locais=null;
+    render(); toast('Local excluído'); salvar();
   }, 'red');
 }
 
@@ -697,33 +705,35 @@ function salvarTipo(){
   const t=(gv('campo-tipo')||'').trim(); if(!t) return;
   if(edit.tipos!=null){
     const old=edit.tipos;
-    pedirConfirmacao('Salvar alterações do tipo', [`${old} → ${t}`, 'Eventos que usam este tipo são atualizados também.'], async ()=>{
-      if(_gravando) return; _gravando=true; try{ const idx=db.tipos.indexOf(old); if(idx>=0) db.tipos[idx]=t; db.eventos.forEach(e=>{ if(e.tipo===old) e.tipo=t; }); edit.tipos=null; const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); toast('Tipo atualizado'); } finally { _gravando=false; }
+    pedirConfirmacao('Salvar alterações do tipo', [`${old} → ${t}`, 'Eventos que usam este tipo são atualizados também.'], ()=>{
+      const idx=db.tipos.indexOf(old); if(idx>=0) db.tipos[idx]=t; db.eventos.forEach(e=>{ if(e.tipo===old) e.tipo=t; }); edit.tipos=null; const i=document.getElementById('campo-tipo'); if(i) i.value='';
+      render(); toast('Tipo atualizado'); salvar();
     });
   } else {
-    pedirConfirmacao('Cadastrar novo tipo', [t], async ()=>{
-      if(_gravando) return; _gravando=true; try{ if(!db.tipos.includes(t)) db.tipos.push(t); focusApos='campo-tipo'; const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); toast('Tipo cadastrado'); } finally { _gravando=false; }
-    });
+    if(_gravando) return; _gravando=true;
+    if(!db.tipos.includes(t)) db.tipos.push(t); focusApos='campo-tipo'; const i=document.getElementById('campo-tipo'); if(i) i.value='';
+    render(); toast('Tipo cadastrado'); salvar();
+    _gravando=false;
   }
 }
 function delTipo(t){
-  pedirConfirmacao('Excluir tipo', [t], async ()=>{
-    db.tipos=db.tipos.filter(x=>x!==t); if(edit.tipos===t) edit.tipos=null; await salvar(); render(); toast('Tipo excluído');
+  pedirConfirmacao('Excluir tipo', [t], ()=>{
+    db.tipos=db.tipos.filter(x=>x!==t); if(edit.tipos===t) edit.tipos=null;
+    render(); toast('Tipo excluído'); salvar();
   }, 'red');
 }
 function opcoesTipo(sel){ return `<option value="" disabled ${sel?'':'selected'}>— escolha o tipo —</option>`+db.tipos.map(t=>`<option ${sel===t?'selected':''}>${esc(t)}</option>`).join('')+`<option value="__novo__">➕ Cadastrar novo tipo…</option>`; }
-async function criarTipoInline(){
-  if(_gravando) return; _gravando=true; try{
-  const inp=document.getElementById('ev-tipo-novo'); if(!inp) return;
-  const t=(inp.value||'').trim(); if(!t){ inp.focus(); return; }
+function criarTipoInline(){
+  if(_gravando) return; _gravando=true;
+  const inp=document.getElementById('ev-tipo-novo'); if(!inp){ _gravando=false; return; }
+  const t=(inp.value||'').trim(); if(!t){ inp.focus(); _gravando=false; return; }
   if(!db.tipos.includes(t)) db.tipos.push(t);
-  await salvar();
   const sel=document.getElementById('ev-tipo'); if(sel){ sel.innerHTML=opcoesTipo(t); sel.value=t; }
   inp.value=''; const w=document.getElementById('ev-tipo-novo-wrap'); if(w) w.classList.add('hidden');
-  const lista=document.getElementById('lista-eventos'); /* atualiza o card de Tipos sem perder o formulário */
   const chips=document.querySelector('.typchips'); if(chips){ chips.innerHTML=db.tipos.map(x=>`<span class="typchip">${esc(x)}<span class="te" data-action="editTipo" data-t="${esc(x)}" title="Editar">${ico('edit')}</span><button data-action="delTipo" data-t="${esc(x)}" aria-label="Remover">×</button></span>`).join(''); }
   toast(`Tipo "${t}" criado`);
-  } finally { _gravando=false; }
+  salvar();
+  _gravando=false;
 }
 function cancelarTipoNovo(){ const w=document.getElementById('ev-tipo-novo-wrap'); if(w) w.classList.add('hidden'); const inp=document.getElementById('ev-tipo-novo'); if(inp) inp.value=''; const sel=document.getElementById('ev-tipo'); if(sel && sel.value==='__novo__'){ sel.value=db.tipos[0]||''; } }
 
@@ -735,22 +745,20 @@ function remDataPendente(d){ restricoesPendentes=restricoesPendentes.filter(x=>x
 function salvarRestricoes(){
   if(!restricaoMembro){ toast('Escolha o membro'); return; }
   if(!restricoesPendentes.length){ toast('Marque ao menos uma data'); return; }
+  if(_gravando) return; _gravando=true;
   const nome=nomeMembro(restricaoMembro);
-  const linhas=restricoesPendentes.slice().sort().map(d=>formatData(d).dmy);
-  pedirConfirmacao(`Marcar restrição para ${nome}`, linhas, async ()=>{
-    if(_gravando) return; _gravando=true; try{
-      let add=0,dup=0;
-      for(const d of restricoesPendentes){ if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===d)){ dup++; continue; } db.restricoes.push({id:uid(),membroId:restricaoMembro,data:d}); add++; }
-      restricoesPendentes=[];
-      await salvar(); render(); toast(`${add} restrição(ões) para ${nome}${dup?` · ${dup} já existia(m)`:''}`);
-    } finally { _gravando=false; }
-  });
+  let add=0,dup=0;
+  for(const d of restricoesPendentes){ if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===d)){ dup++; continue; } db.restricoes.push({id:uid(),membroId:restricaoMembro,data:d}); add++; }
+  restricoesPendentes=[];
+  render(); toast(`${add} restrição(ões) para ${nome}${dup?` · ${dup} já existia(m)`:''}`); salvar();
+  _gravando=false;
 }
 function addMaisRestricoes(mid){ restricaoMembro=mid; restricoesPendentes=[]; render(); window.scrollTo({top:0,behavior:'smooth'}); }
 function delRestricao(id){
   const r=db.restricoes.find(x=>x.id===id); if(!r) return;
-  pedirConfirmacao('Remover restrição', [`${nomeMembro(r.membroId)} — ${formatData(r.data).dmy}`], async ()=>{
-    db.restricoes=db.restricoes.filter(x=>x.id!==id); await salvar(); render(); toast('Restrição removida');
+  pedirConfirmacao('Remover restrição', [`${nomeMembro(r.membroId)} — ${formatData(r.data).dmy}`], ()=>{
+    db.restricoes=db.restricoes.filter(x=>x.id!==id);
+    render(); toast('Restrição removida'); salvar();
   }, 'red');
 }
 
@@ -786,19 +794,23 @@ function salvarEvento(){
   const d=lerFormEvento(); if(!d) return;
   const dupId=edit.eventos||null;
   if(db.eventos.some(x=> x.id!==dupId && x.tipo===d.tipo && x.localId===d.localId && (x.horario||'')===(d.horario||''))){ toast('Já existe um evento com o mesmo tipo, local e horário'); return; }
-  const editando=!!edit.eventos;
-  pedirConfirmacao(editando?'Salvar alterações do evento':'Cadastrar novo evento', resumoEvento(d), async ()=>{
-    if(_gravando) return; _gravando=true; try{
-      if(editando){ const ev=db.eventos.find(x=>x.id===edit.eventos); if(ev){ const keep=ev.id; for(const k of Object.keys(ev)) delete ev[k]; Object.assign(ev,{id:keep},d); } edit.eventos=null; toast('Evento atualizado'); }
-      else { db.eventos.push({id:uid(),...d}); toast('Evento cadastrado'); }
-      await salvar(); render();
-    } finally { _gravando=false; }
-  });
+  if(edit.eventos){
+    pedirConfirmacao('Salvar alterações do evento', resumoEvento(d), ()=>{
+      const ev=db.eventos.find(x=>x.id===edit.eventos); if(ev){ const keep=ev.id; for(const k of Object.keys(ev)) delete ev[k]; Object.assign(ev,{id:keep},d); } edit.eventos=null;
+      render(); toast('Evento atualizado'); salvar();
+    });
+  } else {
+    if(_gravando) return; _gravando=true;
+    db.eventos.push({id:uid(),...d});
+    render(); toast('Evento cadastrado'); salvar();
+    _gravando=false;
+  }
 }
 function delEvento(id){
   const ev=db.eventos.find(x=>x.id===id); if(!ev) return;
-  pedirConfirmacao('Excluir evento', [`${ev.tipo} · ${nomeLocal(ev.localId)}`, recorrenciaTexto(ev), 'Remove também as exceções (dias cancelados) deste evento.'], async ()=>{
-    db.eventos=db.eventos.filter(x=>x.id!==id); db.excecoes=db.excecoes.filter(e=>e.eventoId!==id); if(edit.eventos===id) edit.eventos=null; await salvar(); render(); toast('Evento excluído');
+  pedirConfirmacao('Excluir evento', [`${ev.tipo} · ${nomeLocal(ev.localId)}`, recorrenciaTexto(ev), 'Remove também as exceções (dias cancelados) deste evento.'], ()=>{
+    db.eventos=db.eventos.filter(x=>x.id!==id); db.excecoes=db.excecoes.filter(e=>e.eventoId!==id); if(edit.eventos===id) edit.eventos=null;
+    render(); toast('Evento excluído'); salvar();
   }, 'red');
 }
 
@@ -849,7 +861,7 @@ function importarPlanilha(file){
           if(db.restricoes.some(x=>x.membroId===mc.membroId&&x.data===data)){ dup++; continue; }
           db.restricoes.push({id:uid(),membroId:mc.membroId,data}); add++; }
       }
-      await salvar(); render();
+      render(); salvar();
       let msg=`${add} restrição(ões) importada(s)`; if(dup) msg+=` · ${dup} já existia(m)`; if(naoEnc) msg+=` · ${faltam.size} membro(s) não encontrado(s)`;
       toast(msg);
     }catch(err){ toast('Falha ao ler a planilha'); }
@@ -1818,37 +1830,42 @@ function salvarFase(){
   const nome=(gv('campo-fase')||'').trim(); if(!nome) return; if(!db.fases) db.fases=[];
   if(edit.fases){
     const fa=db.fases.find(x=>x.id===edit.fases); const antigo=fa?fa.nome:'';
-    pedirConfirmacao('Salvar alterações da fase', [`${antigo} → ${nome}`], async ()=>{
-      if(_gravando) return; _gravando=true; try{ if(fa) fa.nome=nome; edit.fases=null; await salvar(); render(); toast('Fase atualizada'); } finally { _gravando=false; }
+    pedirConfirmacao('Salvar alterações da fase', [`${antigo} → ${nome}`], ()=>{
+      if(fa) fa.nome=nome; edit.fases=null;
+      render(); toast('Fase atualizada'); salvar();
     });
   } else {
-    pedirConfirmacao('Cadastrar nova fase', [nome], async ()=>{
-      if(_gravando) return; _gravando=true; try{ db.fases.push({id:uid(), nome, datas:[]}); focusApos='campo-fase'; await salvar(); render(); toast('Fase cadastrada'); } finally { _gravando=false; }
-    });
+    if(_gravando) return; _gravando=true;
+    db.fases.push({id:uid(), nome, datas:[]}); focusApos='campo-fase';
+    render(); toast('Fase cadastrada'); salvar();
+    _gravando=false;
   }
 }
 function delFase(id){
   if(!db.fases) return; const fa=db.fases.find(x=>x.id===id); if(!fa) return;
   const nMembros=db.membros.filter(m=>m.faseId===id).length;
-  pedirConfirmacao('Excluir fase', [fa.nome, nMembros?`${nMembros} membro(s) ficarão sem fase.`:'Nenhum membro vinculado.'], async ()=>{
-    db.fases=db.fases.filter(x=>x.id!==id); db.membros.forEach(m=>{ if(m.faseId===id) m.faseId=null; }); if(edit.fases===id) edit.fases=null; await salvar(); render(); toast('Fase removida');
+  pedirConfirmacao('Excluir fase', [fa.nome, nMembros?`${nMembros} membro(s) ficarão sem fase.`:'Nenhum membro vinculado.'], ()=>{
+    db.fases=db.fases.filter(x=>x.id!==id); db.membros.forEach(m=>{ if(m.faseId===id) m.faseId=null; }); if(edit.fases===id) edit.fases=null;
+    render(); toast('Fase removida'); salvar();
   }, 'red');
 }
 function addFaseData(id){
   const d=gv('fdata-'+id); if(!d){ toast('Escolha uma data'); return; }
   const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return;
   if((fa.datas||[]).includes(d)){ toast('Essa data já está cadastrada'); return; }
-  pedirConfirmacao(`Adicionar data de formação — ${fa.nome}`, [formatData(d).dmy], async ()=>{
-    if(_gravando) return; _gravando=true; try{ if(!fa.datas) fa.datas=[]; fa.datas.push(d); await salvar(); render(); toast('Data adicionada'); } finally { _gravando=false; }
-  });
+  if(_gravando) return; _gravando=true;
+  if(!fa.datas) fa.datas=[]; fa.datas.push(d);
+  render(); toast('Data adicionada'); salvar();
+  _gravando=false;
 }
 function delFaseData(id,data){
   const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return;
-  pedirConfirmacao('Remover data de formação', [`${fa.nome} — ${formatData(data).dmy}`], async ()=>{
-    fa.datas=(fa.datas||[]).filter(x=>x!==data); await salvar(); render(); toast('Data removida');
+  pedirConfirmacao('Remover data de formação', [`${fa.nome} — ${formatData(data).dmy}`], ()=>{
+    fa.datas=(fa.datas||[]).filter(x=>x!==data);
+    render(); toast('Data removida'); salvar();
   }, 'red');
 }
-async function setMembroFase(id, faseId){ const m=db.membros.find(x=>x.id===id); if(!m) return; m.faseId=faseId||null; await salvar(); render(); }
+function setMembroFase(id, faseId){ const m=db.membros.find(x=>x.id===id); if(!m) return; m.faseId=faseId||null; render(); salvar(); }
 
 /* ---------- Puxar disponibilidades (formulário -> motor) ---------- */
 async function puxarDisponibilidades(){
