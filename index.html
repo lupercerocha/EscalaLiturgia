@@ -382,14 +382,29 @@
 </style>
 </head>
 <body>
-<!-- Overlay de login do coordenador (magic link) -->
+<!-- Overlay de acesso do coordenador (e-mail + senha) -->
 <div id="loginOverlay" style="display:none; position:fixed; inset:0; background:#F1EFE8; z-index:9999; align-items:center; justify-content:center; padding:20px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
-  <div style="max-width:380px; width:100%; background:#fff; border:1px solid #E4E1D8; border-radius:16px; padding:28px; box-shadow:0 8px 30px rgba(0,0,0,.1); text-align:center;">
-    <h2 style="margin:0 0 6px; font-size:19px; color:#15233F;">Escala da Liturgia</h2>
-    <p style="margin:0 0 18px; color:#6B7488; font-size:14px;">Painel do coordenador. Entre com seu e-mail para receber o link de acesso.</p>
-    <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="email" style="width:100%; box-sizing:border-box; border:1px solid #E4E1D8; border-radius:10px; padding:11px 13px; font:inherit; font-size:15px; margin-bottom:10px;">
-    <button id="loginBtn" style="width:100%; background:#002554; color:#fff; border:none; border-radius:10px; padding:12px; font:inherit; font-size:15px; font-weight:600; cursor:pointer;">Enviar link de acesso</button>
-    <p id="loginMsg" style="margin:12px 0 0; font-size:13px; color:#6B7488; min-height:18px;"></p>
+  <div style="max-width:380px; width:100%; background:#fff; border:1px solid #E4E1D8; border-radius:16px; padding:28px; box-shadow:0 8px 30px rgba(0,0,0,.1);">
+    <h2 style="margin:0 0 6px; font-size:19px; color:#15233F; text-align:center;">Escala da Liturgia</h2>
+
+    <!-- Painel 1: login -->
+    <div id="painelLogin">
+      <p style="margin:0 0 18px; color:#6B7488; font-size:14px; text-align:center;">Acesso do coordenador.</p>
+      <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="email" style="width:100%; box-sizing:border-box; border:1px solid #E4E1D8; border-radius:10px; padding:11px 13px; font:inherit; font-size:15px; margin-bottom:10px;">
+      <input id="loginSenha" type="password" placeholder="Senha" autocomplete="current-password" style="width:100%; box-sizing:border-box; border:1px solid #E4E1D8; border-radius:10px; padding:11px 13px; font:inherit; font-size:15px; margin-bottom:10px;">
+      <button id="loginBtn" style="width:100%; background:#002554; color:#fff; border:none; border-radius:10px; padding:12px; font:inherit; font-size:15px; font-weight:600; cursor:pointer;">Entrar</button>
+      <p style="margin:12px 0 0; text-align:center;"><a id="linkEsqueci" href="#" style="color:#8C6216; font-size:13px; text-decoration:none;">Esqueci minha senha</a></p>
+    </div>
+
+    <!-- Painel 2: definir/criar senha (convite, reset ou troca) -->
+    <div id="painelSenha" style="display:none;">
+      <p style="margin:0 0 18px; color:#6B7488; font-size:14px; text-align:center;">Crie sua nova senha de acesso.</p>
+      <input id="novaSenha" type="password" placeholder="Nova senha (mín. 8 caracteres)" autocomplete="new-password" style="width:100%; box-sizing:border-box; border:1px solid #E4E1D8; border-radius:10px; padding:11px 13px; font:inherit; font-size:15px; margin-bottom:10px;">
+      <input id="novaSenha2" type="password" placeholder="Repita a nova senha" autocomplete="new-password" style="width:100%; box-sizing:border-box; border:1px solid #E4E1D8; border-radius:10px; padding:11px 13px; font:inherit; font-size:15px; margin-bottom:10px;">
+      <button id="salvarSenhaBtn" style="width:100%; background:#002554; color:#fff; border:none; border-radius:10px; padding:12px; font:inherit; font-size:15px; font-weight:600; cursor:pointer;">Salvar senha e entrar</button>
+    </div>
+
+    <p id="loginMsg" style="margin:12px 0 0; font-size:13px; color:#6B7488; min-height:18px; text-align:center;"></p>
   </div>
 </div>
   <div class="wrap" id="app"></div>
@@ -849,7 +864,7 @@ function render(){
       <span class="tiny muted">Instituto Beneditino em Adoração · escala mensal</span>
       ${confirmReset
         ? `<span class="tiny" style="display:inline-flex; gap:8px; align-items:center; flex-wrap:wrap">Descartar alterações locais e recarregar do servidor? <button class="btn ghost" data-action="confirmarReset" style="padding:6px 12px">Sim, recarregar</button><button class="btn ghost" data-action="cancelReset" style="padding:6px 12px">Cancelar</button></span>`
-        : `<span style="display:inline-flex;gap:14px;align-items:center;flex-wrap:wrap"><button class="linkbtn" data-action="pedirReset" style="color:var(--sub);display:inline-flex;align-items:center;gap:6px">${ico('rotate')} Recarregar da nuvem</button><button class="linkbtn" data-action="logout" style="color:var(--sub)">Sair</button></span>`}
+        : `<span style="display:inline-flex;gap:14px;align-items:center;flex-wrap:wrap"><button class="linkbtn" data-action="pedirReset" style="color:var(--sub);display:inline-flex;align-items:center;gap:6px">${ico('rotate')} Recarregar da nuvem</button><button class="linkbtn" data-action="trocarSenha" style="color:var(--sub)">Trocar senha</button><button class="linkbtn" data-action="logout" style="color:var(--sub)">Sair</button></span>`}
     </footer>`;
   if(document.getElementById('ev-freq')) atualizarRecorrencia();
   if(focusApos){ const el=document.getElementById(focusApos); if(el) el.focus(); focusApos=null; }
@@ -1200,6 +1215,7 @@ document.addEventListener('click', e=>{
     case 'importarPlanilhaBtn': importarPlanilhaBtn(); break;
     case 'pedirReset': pedirReset(); break;
     case 'logout': sairDoApp(); break;
+    case 'trocarSenha': trocarSenha(); break;
     case 'cancelReset': cancelReset(); break;
     case 'confirmarReset': confirmarReset(); break;
   }
@@ -1225,15 +1241,38 @@ document.addEventListener('input', e=>{
 document.addEventListener('keydown', e=>{ if(e.key!=='Enter') return; const el=e.target.closest('[data-enter]'); if(!el) return; e.preventDefault(); const a=el.getAttribute('data-enter'); if(a==='salvarMembro') salvarMembro(); else if(a==='salvarLocal') salvarLocal(); else if(a==='salvarTipo') salvarTipo(); else if(a==='criarTipoInline') criarTipoInline(); });
 
 /* ---------- Início ---------- */
-function mostrarLogin(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; }
+function msgLogin(t){ const m=document.getElementById('loginMsg'); if(m) m.textContent=t||''; }
+function mostrarLogin(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; const pl=document.getElementById('painelLogin'), ps=document.getElementById('painelSenha'); if(pl) pl.style.display='block'; if(ps) ps.style.display='none'; msgLogin(''); }
+function mostrarDefinirSenha(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='flex'; const pl=document.getElementById('painelLogin'), ps=document.getElementById('painelSenha'); if(pl) pl.style.display='none'; if(ps) ps.style.display='block'; msgLogin(''); }
 function ocultarLogin(){ const o=document.getElementById('loginOverlay'); if(o) o.style.display='none'; }
-async function enviarLoginLink(){
+let _trocaManual=false;
+async function fazerLogin(){
   const email=(document.getElementById('loginEmail').value||'').trim();
-  const msg=document.getElementById('loginMsg');
-  if(!email){ msg.textContent='Digite seu e-mail.'; return; }
-  msg.textContent='Enviando…';
-  try{ const { error }=await sbAuth.entrar(email); msg.textContent = error ? ('Erro: '+error.message) : 'Link enviado! Confira seu e-mail e clique para entrar.'; }
-  catch(e){ msg.textContent='Erro ao enviar. Tente de novo.'; }
+  const senha=(document.getElementById('loginSenha').value||'');
+  if(!email||!senha){ msgLogin('Preencha e-mail e senha.'); return; }
+  msgLogin('Entrando…');
+  try{ const { error }=await sbAuth.entrar(email,senha); if(error){ msgLogin('E-mail ou senha incorretos.'); } }
+  catch(e){ msgLogin('Erro ao entrar. Tente de novo.'); }
+}
+async function enviarReset(){
+  const email=(document.getElementById('loginEmail').value||'').trim();
+  if(!email){ msgLogin('Digite seu e-mail acima e clique de novo em “Esqueci minha senha”.'); return; }
+  msgLogin('Enviando…');
+  try{ const { error }=await sbAuth.esqueciSenha(email); msgLogin(error?('Erro: '+error.message):'Enviamos um link para o seu e-mail. Abra e defina a nova senha.'); }
+  catch(e){ msgLogin('Erro ao enviar. Tente de novo.'); }
+}
+async function salvarNovaSenha(){
+  const s1=(document.getElementById('novaSenha').value||''); const s2=(document.getElementById('novaSenha2').value||'');
+  if(s1.length<8){ msgLogin('A senha precisa ter ao menos 8 caracteres.'); return; }
+  if(s1!==s2){ msgLogin('As senhas não conferem.'); return; }
+  msgLogin('Salvando…');
+  try{
+    const { error }=await sbAuth.definirSenha(s1);
+    if(error){ msgLogin('Erro: '+error.message); return; }
+    history.replaceState(null,'',window.location.pathname+window.location.search); // limpa o hash do convite/reset
+    if(_trocaManual){ _trocaManual=false; ocultarLogin(); toast('Senha atualizada'); }
+    else { ocultarLogin(); await carregarErenderizar(); }
+  }catch(e){ msgLogin('Erro ao salvar. Tente de novo.'); }
 }
 async function carregarErenderizar(){
   const ok=await carregar();
@@ -1241,13 +1280,27 @@ async function carregarErenderizar(){
   aplicarTema();
   const d=new Date(); const prox=new Date(d.getFullYear(),d.getMonth()+1,1); setMes(prox.getFullYear(),prox.getMonth());
 }
+function trocarSenha(){ _trocaManual=true; const n1=document.getElementById('novaSenha'); const n2=document.getElementById('novaSenha2'); if(n1) n1.value=''; if(n2) n2.value=''; mostrarDefinirSenha(); }
 async function init(){
   aplicarTema();
-  const lb=document.getElementById('loginBtn'); if(lb) lb.onclick=enviarLoginLink;
-  const le=document.getElementById('loginEmail'); if(le) le.onkeydown=e=>{ if(e.key==='Enter') enviarLoginLink(); };
+  const lb=document.getElementById('loginBtn'); if(lb) lb.onclick=fazerLogin;
+  const ls=document.getElementById('loginSenha'); if(ls) ls.onkeydown=e=>{ if(e.key==='Enter') fazerLogin(); };
+  const es=document.getElementById('linkEsqueci'); if(es) es.onclick=e=>{ e.preventDefault(); enviarReset(); };
+  const ss=document.getElementById('salvarSenhaBtn'); if(ss) ss.onclick=salvarNovaSenha;
+  const n2=document.getElementById('novaSenha2'); if(n2) n2.onkeydown=e=>{ if(e.key==='Enter') salvarNovaSenha(); };
+
+  const tipo=sbAuth.tipoNaUrl();            // veio de um link de convite ou de reset?
   const sessao=await sbAuth.sessao();
-  if(sessao){ ocultarLogin(); await carregarErenderizar(); } else { mostrarLogin(); }
-  sbAuth.aoMudar(async (s)=>{ if(s){ ocultarLogin(); await carregarErenderizar(); } else { mostrarLogin(); } });
+  if(tipo==='invite'||tipo==='recovery'){ mostrarDefinirSenha(); }
+  else if(sessao){ ocultarLogin(); await carregarErenderizar(); }
+  else { mostrarLogin(); }
+
+  sbAuth.aoMudar(async (evt,s)=>{
+    if(evt==='PASSWORD_RECOVERY'){ mostrarDefinirSenha(); return; }
+    if(_trocaManual) return;                 // trocando senha dentro do app: não recarrega
+    if(s){ if(!sbAuth.tipoNaUrl()){ ocultarLogin(); await carregarErenderizar(); } }
+    else { mostrarLogin(); }
+  });
 }
 /* ---------- Calendário / Prévia ---------- */
 function abrirCalendario(){ vista='calendario'; calDiaSel=null; render(); }

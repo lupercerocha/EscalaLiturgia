@@ -20,14 +20,29 @@ const sbAuth = {
     const { data } = await sb.auth.getSession();
     return data ? data.session : null;
   },
-  async entrar(email) {
-    return sb.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.href.split('#')[0] }
+  // Login com e-mail + senha (sem envio de e-mail, sem rate limit).
+  async entrar(email, senha) {
+    return sb.auth.signInWithPassword({ email, password: senha });
+  },
+  // Esqueci a senha: envia e-mail com link para redefinir.
+  async esqueciSenha(email) {
+    return sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href.split('#')[0]
     });
   },
+  // Define/atualiza a senha do usuário logado (usado no convite, no reset e na troca manual).
+  async definirSenha(nova) {
+    return sb.auth.updateUser({ password: nova });
+  },
   async sair() { return sb.auth.signOut(); },
-  aoMudar(cb) { sb.auth.onAuthStateChange((_evt, session) => cb(session)); }
+  aoMudar(cb) { sb.auth.onAuthStateChange((evt, session) => cb(evt, session)); },
+  // Detecta se a pessoa chegou por um link de convite ou de redefinição de senha.
+  tipoNaUrl() {
+    const h = window.location.hash || '';
+    if (h.includes('type=recovery')) return 'recovery';
+    if (h.includes('type=invite'))   return 'invite';
+    return null;
+  }
 };
 window.sbAuth = sbAuth;
 
