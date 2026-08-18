@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disponibilidade · Escala da Liturgia</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#F1EFE8; --paper:#fff; --ink:#15233F; --sub:#6B7488; --line:#E4E1D8;
+         --navy:#002554; --gold:#C99036; --gold-soft:#F4EBD7; --gold-deep:#8C6216;
+         --green:#2E7D52; --green-soft:#E4F0E9; --red:#C0392B; --red-soft:#F7E3E0;
+         --shadow:0 1px 2px rgba(0,37,84,.05), 0 4px 16px rgba(0,37,84,.07);
+         --display:'Montserrat',system-ui,sans-serif; --body:'Inter',system-ui,sans-serif; }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:var(--body); font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:620px; margin:0 auto; padding:20px 16px 60px;}
+  header{text-align:center; margin-bottom:18px;}
+  header h1{font-family:var(--display); font-weight:700; font-size:22px; margin:0;}
+  header p{margin:6px 0 0; color:var(--sub); font-size:11px; font-weight:600; letter-spacing:1.3px; text-transform:uppercase;}
+  .rule{height:3px; width:64px; background:var(--gold); border-radius:2px; margin:12px auto 0;}
+  .card{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:16px 18px; margin-bottom:14px;}
+  label.fld{display:block; font-size:12px; font-weight:600; color:var(--sub); margin-bottom:6px;}
+  select, input{width:100%; border:1px solid var(--line); border-radius:10px; padding:11px 12px; font-family:var(--body); font-size:15px; background:var(--paper); color:var(--ink);}
+  .monthbar{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;}
+  .monthbar .m{font-family:var(--display); font-weight:700; font-size:18px;}
+  .mbtn{border:1px solid var(--line); background:var(--paper); border-radius:9px; width:38px; height:38px; font-size:18px; cursor:pointer; color:var(--ink);}
+  .mbtn:hover{background:var(--gold-soft);}
+  .confirm{background:var(--gold-soft); border:1px solid var(--gold); border-radius:11px; padding:11px 14px; font-size:14px; color:var(--gold-deep); margin-bottom:14px;}
+  .day{margin-bottom:16px;}
+  .day-h{font-family:var(--display); font-weight:700; font-size:14px; color:var(--gold-deep); border-bottom:1.5px solid var(--gold-soft); padding-bottom:5px; margin-bottom:9px;}
+  .occ{border:1px solid var(--line); border-radius:11px; padding:11px 12px; margin-bottom:9px;}
+  .occ.nao{border-color:var(--red); background:var(--red-soft);}
+  .occ.prefiro{border-color:var(--gold); background:var(--gold-soft);}
+  .occ-t{font-weight:600; font-size:14.5px;}
+  .occ-t .type{color:var(--gold-deep);}
+  .occ-m{color:var(--sub); font-size:12.5px; margin-top:1px;}
+  .seg{display:flex; gap:6px; margin-top:10px;}
+  .seg button{flex:1; border:1px solid var(--line); background:var(--paper); border-radius:9px; padding:8px 4px; font-family:var(--body); font-size:12.5px; font-weight:600; color:var(--sub); cursor:pointer;}
+  .seg button.on.posso{background:var(--green); border-color:var(--green); color:#fff;}
+  .seg button.on.nao{background:var(--red); border-color:var(--red); color:#fff;}
+  .seg button.on.prefiro{background:var(--gold); border-color:var(--gold); color:#241803;}
+  .obs textarea{width:100%; border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-family:var(--body); font-size:14px; resize:vertical; min-height:64px;}
+  .send{position:sticky; bottom:12px; margin-top:8px;}
+  .send button{width:100%; background:var(--navy); color:#fff; border:none; border-radius:12px; padding:15px; font-family:var(--display); font-weight:700; font-size:16px; cursor:pointer; box-shadow:var(--shadow);}
+  .send button:disabled{opacity:.5;}
+  .msg{padding:12px 14px; border-radius:10px; font-size:14px; font-weight:600; margin-bottom:14px;}
+  .msg.ok{background:var(--green-soft); color:var(--green);}
+  .msg.err{background:var(--red-soft); color:var(--red);}
+  .msg.load{background:#eef1f6; color:#41527a;}
+  .hint{font-size:12.5px; color:var(--sub); text-align:center; margin:6px 0 0;}
+  .legend{display:flex; gap:14px; justify-content:center; font-size:11.5px; color:var(--sub); margin:2px 0 12px; flex-wrap:wrap;}
+  .legend b{font-weight:600;}
+  .done{text-align:center; padding:30px 16px;}
+  .done .big{font-size:40px;}
+  .done h2{font-family:var(--display); margin:10px 0 6px;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Disponibilidade</h1>
+      <p>Instituto Beneditino em Adoração</p>
+      <div class="rule"></div>
+    </header>
+    <div id="status" class="msg load">Carregando…</div>
+    <div id="app" style="display:none"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script>
+  /* ---------- helpers de data (iguais aos do sistema) ---------- */
+  const pad=n=>String(n).padStart(2,'0');
+  const iso=(a,m,d)=>`${a}-${pad(m+1)}-${pad(d)}`;
+  const diasDoMes=(a,m)=>new Date(a,m+1,0).getDate();
+  const DSEM=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+  const DSEMA=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  const MESES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  function dataPartes(s){ const p=s.split('-').map(Number); const dt=new Date(p[0],p[1]-1,p[2]); return {dia:p[2],mes:p[1],ano:p[0],wd:dt.getDay()}; }
+  function addDias(s,n){ const p=s.split('-').map(Number); const d=new Date(p[0],p[1]-1,p[2]); d.setDate(d.getDate()+n); return iso(d.getFullYear(),d.getMonth(),d.getDate()); }
+  function ordinalSemana(dateStr){ const [y,m,dd]=dateStr.split('-').map(Number); const wd=new Date(y,m-1,dd).getDay(); const dim=new Date(y,m,0).getDate(); const occ=[]; for(let d=1;d<=dim;d++) if(new Date(y,m-1,d).getDay()===wd) occ.push(d); const pos=occ.indexOf(dd); return pos===occ.length-1?5:pos+1; }
+  function nthWeekdayOfMonth(y,m,wd,ordinal){ const dim=new Date(y,m+1,0).getDate(); const days=[]; for(let d=1;d<=dim;d++) if(new Date(y,m,d).getDay()===wd) days.push(d); const idx=ordinal>=5?days.length-1:ordinal-1; if(idx<0||idx>=days.length) return null; return days[idx]; }
+  function fmt(s){ const p=dataPartes(s); return {sem:DSEMA[p.wd], semFull:DSEM[p.wd], dm:`${pad(p.dia)}/${pad(p.mes)}`}; }
+  const hhmm=t=>t?String(t).slice(0,5):'';
+
+  /* ---------- recorrência (mesma lógica do sistema) ---------- */
+  function iterar(ev, cb){
+    const inicio=ev.dataInicio; if(!inicio) return;
+    const freq=ev.freq||'naoRepete'; const passo=Math.max(1,ev.intervalo||1);
+    const fim=ev.fim||{tipo:'nunca'}; const CAP=8000; let idx=0;
+    function emit(ds){ if(fim.tipo==='ate'&&fim.ate&&ds>fim.ate) return false; idx++; if(cb(ds)===false) return false; if(fim.tipo==='apos'&&fim.apos&&idx>=fim.apos) return false; return true; }
+    if(freq==='naoRepete'){ emit(inicio); return; }
+    if(freq==='diario'){ let d=inicio,n=0; while(n++<CAP){ if(!emit(d)) return; d=addDias(d,passo); } return; }
+    if(freq==='semanal'){
+      const dias=(ev.diasSemana&&ev.diasSemana.length)?ev.diasSemana.slice().sort((a,b)=>a-b):[dataPartes(inicio).wd];
+      const p=inicio.split('-').map(Number); const ws=new Date(p[0],p[1]-1,p[2]); ws.setDate(ws.getDate()-ws.getDay());
+      let n=0; while(n++<CAP){ for(const wd of dias){ const dt=new Date(ws); dt.setDate(dt.getDate()+wd); const ds=iso(dt.getFullYear(),dt.getMonth(),dt.getDate()); if(ds>=inicio){ if(!emit(ds)) return; } } ws.setDate(ws.getDate()+7*passo); } return;
+    }
+    if(freq==='mensal'){
+      const [y,m,dd]=inicio.split('-').map(Number); const modo=ev.modoMensal||'dia';
+      const wd=dataPartes(inicio).wd, ord=ordinalSemana(inicio); let cur=new Date(y,m-1,1), n=0;
+      while(n++<CAP){ const yy=cur.getFullYear(),mm=cur.getMonth(); let day=null;
+        if(modo==='posicao') day=nthWeekdayOfMonth(yy,mm,wd,ord);
+        else { const dim=new Date(yy,mm+1,0).getDate(); if(dd<=dim) day=dd; }
+        if(day){ const ds=iso(yy,mm,day); if(ds>=inicio){ if(!emit(ds)) return; } }
+        cur.setMonth(cur.getMonth()+passo);
+      } return;
+    }
+    if(freq==='anual'){ const [y,m,dd]=inicio.split('-').map(Number); let yy=y,n=0; while(n++<CAP){ const dim=new Date(yy,m,0).getDate(); if(dd<=dim){ const ds=iso(yy,m-1,dd); if(ds>=inicio){ if(!emit(ds)) return; } } yy+=passo; } return; }
+  }
+  function ocorrenciasDoMes(ano,mes){
+    const ini=iso(ano,mes,1), fim=iso(ano,mes,diasDoMes(ano,mes)); const out=[];
+    for(const ev of EVENTOS){ iterar(ev, ds=>{ if(ds>fim) return false; if(ds>=ini) out.push({key:`${ev.id}|${ds}`, eventoId:ev.id, data:ds, tipo:ev.tipo, local:LOCAIS[ev.localId]||'', horario:ev.horario}); return true; }); }
+    out.sort((a,b)=> a.data===b.data?(a.horario||'').localeCompare(b.horario||''):a.data.localeCompare(b.data));
+    return out;
+  }
+
+  /* ---------- estado ---------- */
+  let MEMBROS=[], FASES={}, EVENTOS=[], LOCAIS={};
+  let selAno, selMes, membroId='', estados={}, observ='', enviado=false;
+
+  const $status=document.getElementById('status');
+  const $app=document.getElementById('app');
+  function setStatus(txt,cls){ $status.textContent=txt; $status.className='msg '+cls; $status.style.display=txt?'block':'none'; }
+
+  async function carregar(){
+    try{
+      const [mem,fas,eve,loc]=await Promise.all([
+        sb.from('membros').select('id,nome,fase_id,ativo').order('nome'),
+        sb.from('fases').select('id,nome'),
+        sb.from('eventos').select('*'),
+        sb.from('locais').select('id,nome')
+      ]);
+      for(const r of [mem,fas,eve,loc]) if(r.error) throw r.error;
+      (fas.data||[]).forEach(f=>FASES[f.id]=f.nome);
+      (loc.data||[]).forEach(l=>LOCAIS[l.id]=l.nome);
+      MEMBROS=(mem.data||[]).filter(m=>m.ativo!==false);
+      EVENTOS=(eve.data||[]).map(e=>({ id:e.id, tipo:e.tipo, localId:e.local_id, dataInicio:e.data_inicio,
+        horario:hhmm(e.horario), freq:e.freq, intervalo:e.intervalo, diasSemana:e.dias_semana||[],
+        modoMensal:e.modo_mensal, fim:e.fim||{tipo:'nunca'} }));
+      const hoje=new Date(); const prox=new Date(hoje.getFullYear(),hoje.getMonth()+1,1);
+      selAno=prox.getFullYear(); selMes=prox.getMonth();
+      setStatus('',''); $app.style.display='block'; render();
+    }catch(e){ console.error(e); setStatus('Não consegui carregar. Recarregue a página. ('+(e.message||e)+')','err'); }
+  }
+
+  function render(){
+    if(enviado){ $app.innerHTML=`<div class="done"><div class="big">🙏</div><h2>Recebido!</h2><p class="hint">Sua disponibilidade de ${MESES[selMes]} foi registrada. Se algo mudar, é só preencher de novo — vale a resposta mais recente.</p><button class="mbtn" style="width:auto;padding:0 16px;margin-top:14px" onclick="location.reload()">Enviar de novo</button></div>`; return; }
+    const occs=ocorrenciasDoMes(selAno,selMes);
+    const membro=MEMBROS.find(m=>m.id===membroId);
+    const confirma=membro?`<div class="confirm">Você é <strong>${membro.nome}</strong>${membro.fase_id?` · fase ${FASES[membro.fase_id]||''}`:''}. Se não for você, troque o nome acima.</div>`:'';
+    let corpo='';
+    if(!membroId){ corpo=`<p class="hint">Escolha seu nome para começar.</p>`; }
+    else if(!occs.length){ corpo=`<div class="msg err">Ainda não há serviços cadastrados para ${MESES[selMes]} ${selAno}. Avise o coordenador ou tente outro mês.</div>`; }
+    else {
+      const porDia={}; occs.forEach(o=>{ (porDia[o.data]=porDia[o.data]||[]).push(o); });
+      corpo=`<div class="legend"><span>🟢 <b>Posso</b> (padrão)</span><span>🔴 <b>Não posso</b></span><span>🟡 <b>Prefiro</b></span></div>`;
+      corpo+=Object.keys(porDia).sort().map(d=>{ const f=fmt(d);
+        return `<div class="day"><div class="day-h">${f.semFull}, ${f.dm}</div>${porDia[d].map(o=>{
+          const st=estados[o.key]||'posso';
+          return `<div class="occ ${st==='posso'?'':st}"><div class="occ-t"><span class="type">${o.tipo}</span>${o.local?` · ${o.local}`:''}</div><div class="occ-m">${o.horario||''}</div>
+            <div class="seg" data-key="${o.key}">
+              <button class="posso ${st==='posso'?'on':''}" data-st="posso">Posso</button>
+              <button class="nao ${st==='nao'?'on':''}" data-st="nao">Não posso</button>
+              <button class="prefiro ${st==='prefiro'?'on':''}" data-st="prefiro">Prefiro</button>
+            </div></div>`;
+        }).join('')}</div>`;
+      }).join('');
+      corpo+=`<div class="card obs"><label class="fld">Observação (opcional)</label><textarea id="obs" placeholder="Ex.: prefiro servir junto no sábado; viajo no fim do mês…">${observ}</textarea></div>`;
+      corpo+=`<div class="send"><button id="enviar">Enviar disponibilidade de ${MESES[selMes]}</button></div>`;
+    }
+    $app.innerHTML=`
+      <div class="card">
+        <div class="monthbar"><button class="mbtn" id="mprev">‹</button><div class="m">${MESES[selMes]} ${selAno}</div><button class="mbtn" id="mnext">›</button></div>
+        <p class="hint" style="margin:2px 0 0">Marque só o que muda — quem pode em tudo é só enviar.</p>
+      </div>
+      <div class="card"><label class="fld">Seu nome</label>
+        <select id="membro"><option value="">— escolha seu nome —</option>${MEMBROS.map(m=>`<option value="${m.id}" ${membroId===m.id?'selected':''}>${m.nome}</option>`).join('')}</select>
+      </div>
+      ${confirma}${corpo}`;
+    wire();
+  }
+
+  function wire(){
+    const mp=document.getElementById('mprev'), mn=document.getElementById('mnext');
+    if(mp) mp.onclick=()=>{ const d=new Date(selAno,selMes-1,1); selAno=d.getFullYear(); selMes=d.getMonth(); estados={}; render(); };
+    if(mn) mn.onclick=()=>{ const d=new Date(selAno,selMes+1,1); selAno=d.getFullYear(); selMes=d.getMonth(); estados={}; render(); };
+    const sel=document.getElementById('membro'); if(sel) sel.onchange=e=>{ membroId=e.target.value; render(); };
+    document.querySelectorAll('.seg').forEach(seg=>{ seg.querySelectorAll('button').forEach(b=>{ b.onclick=()=>{ estados[seg.getAttribute('data-key')]=b.getAttribute('data-st'); render(); }; }); });
+    const ob=document.getElementById('obs'); if(ob) ob.oninput=e=>{ observ=e.target.value; };
+    const en=document.getElementById('enviar'); if(en) en.onclick=enviar;
+  }
+
+  async function enviar(){
+    const en=document.getElementById('enviar'); if(en){ en.disabled=true; en.textContent='Enviando…'; }
+    const indisponiveis=[], preferidos=[];
+    for(const [k,v] of Object.entries(estados)){ if(v==='nao') indisponiveis.push(k); else if(v==='prefiro') preferidos.push(k); }
+    try{
+      const { error }=await sb.from('disponibilidades').insert({
+        membro_id:membroId, referencia:`${selAno}-${pad(selMes+1)}`,
+        indisponiveis, preferidos, observacoes:observ||null
+      });
+      if(error) throw error;
+      enviado=true; render();
+    }catch(e){ console.error(e); if(en){ en.disabled=false; en.textContent='Tentar de novo'; } alert('Não consegui enviar: '+(e.message||e)); }
+  }
+
+  carregar();
+  </script>
+</body>
+</html>
