@@ -554,6 +554,8 @@ let confirmReset=false, focusApos=null;
 let vista='normal', calDiaSel=null, previaModo=null;
 let movendo=null;
 let subAba={eventos:'eventos', restricoes:'marcar'};
+let dispMes=null, dispRef=null;   /* disponibilidades puxadas do formulário (mês corrente) */
+let _gravando=false;              /* trava anti duplo-clique: uma gravação por vez */
 
 /* ---------- Persistência ---------- */
 const SKEY='liturgia_v2';   /* nova chave: o app começa do zero */
@@ -589,18 +591,20 @@ function alocar(occs, ano, mes, chave){
   ativos.forEach(m=>{ credito[m.id]=base[m.id]||0; ultimo[m.id]=''; });
   const atrib={};
   for(const o of occs){ if(o.cancelada) continue;
-    const cand=ativos.filter(m=> !restritoNoDia(m.id,o.data) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o));
+    const cand=ativos.filter(m=> !restritoNoDia(m.id,o.data) && !indisponivelOcc(m.id,o.key) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o));
     cand.sort((a,b)=>{
       const ma=credito[a.id]-(base[a.id]||0), mb=credito[b.id]-(base[b.id]||0);
-      if(ma!==mb) return ma-mb;                                                       // 1) menos serviços ESTE mês -> todos servem; diferença <=1
-      if((base[a.id]||0)!==(base[b.id]||0)) return (base[a.id]||0)-(base[b.id]||0);   // 2) FIFO entre meses: quem esta mais atras no historico
-      return (ultimo[a.id]||'').localeCompare(ultimo[b.id]||'');                      // 3) FIFO por recencia (quem serviu ha mais tempo)
+      if(ma!==mb) return ma-mb;                                                       // 1) menos serviços ESTE mês (justiça vem primeiro)
+      const pa=preferidoOcc(a.id,o.key)?0:1, pb=preferidoOcc(b.id,o.key)?0:1;
+      if(pa!==pb) return pa-pb;                                                        // 2) empurrãozinho: quem PREFERE entra antes, só no empate de carga
+      if((base[a.id]||0)!==(base[b.id]||0)) return (base[a.id]||0)-(base[b.id]||0);   // 3) FIFO entre meses
+      return (ultimo[a.id]||'').localeCompare(ultimo[b.id]||'');                      // 4) FIFO por recência
     });
     const esc=cand.slice(0,o.vagas).map(m=>m.id); atrib[o.key]=esc; esc.forEach(id=>{ credito[id]++; ultimo[id]=o.data; });
   }
   return atrib;
 }
-function disponiveis(o, atrib, occs){ return db.membros.filter(m=> m.ativo && !(atrib[o.key]||[]).includes(m.id) && !restritoNoDia(m.id,o.data) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o)); }
+function disponiveis(o, atrib, occs){ return db.membros.filter(m=> m.ativo && !(atrib[o.key]||[]).includes(m.id) && !restritoNoDia(m.id,o.data) && !indisponivelOcc(m.id,o.key) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o)); }
 function atribuicoesDoMes(){
   const chave=chaveMes(selAno,selMes);
   if(escalaAtual && escalaAtual.chave===chave && Object.keys(escalaAtual.atribuicoes).length) return {occs:construirOccs(selAno,selMes), atrib:escalaAtual.atribuicoes};
@@ -613,7 +617,7 @@ function atribuicoesDoMes(){
 function setMes(ano, mes){ selAno=ano; selMes=mes; selecionados.clear(); const chave=chaveMes(ano,mes); escalaAtual = db.escalasSalvas[chave] ? {chave, atribuicoes:JSON.parse(JSON.stringify(db.escalasSalvas[chave].atribuicoes))} : null; render(); }
 function navMes(delta){ const d=new Date(selAno,selMes+delta,1); setMes(d.getFullYear(),d.getMonth()); }
 function gerar(){ movendo=null; const chave=chaveMes(selAno,selMes); const occs=construirOccs(selAno,selMes); escalaAtual={chave,atribuicoes:alocar(occs,selAno,selMes,chave)}; render(); toast('Escala gerada'); }
-async function salvarEscala(){ if(!escalaAtual) return; db.escalasSalvas[chaveMes(selAno,selMes)]={atribuicoes:JSON.parse(JSON.stringify(escalaAtual.atribuicoes))}; await salvar(); render(); toast('Escala do mês salva'); }
+async function salvarEscala(){ if(_gravando) return; _gravando=true; try{ if(!escalaAtual) return; db.escalasSalvas[chaveMes(selAno,selMes)]={atribuicoes:JSON.parse(JSON.stringify(escalaAtual.atribuicoes))}; await salvar(); render(); toast('Escala do mês salva'); } finally { _gravando=false; } }
 function garantirEscalaAtual(){ const chave=chaveMes(selAno,selMes); if(!escalaAtual||escalaAtual.chave!==chave) escalaAtual={chave,atribuicoes:{}}; return escalaAtual; }
 function removerSlot(k,id){ const ea=garantirEscalaAtual(); ea.atribuicoes[k]=(ea.atribuicoes[k]||[]).filter(x=>x!==id); render(); }
 function addSlot(k,id){ if(!id) return; const ea=garantirEscalaAtual(); ea.atribuicoes[k]=[...(ea.atribuicoes[k]||[]),id]; render(); }
@@ -625,29 +629,30 @@ function irEditar(tab,id){ edit[tab]=id; render(); window.scrollTo({top:0,behavi
 function cancelEdit(tab){ edit[tab]=null; render(); }
 
 /* Membros */
-async function salvarMembro(){ const nome=(gv('campo-membro')||'').trim(); if(!nome) return;
+async function salvarMembro(){ if(_gravando) return; _gravando=true; try{ const nome=(gv('campo-membro')||'').trim(); if(!nome) return;
   if(edit.membros){ const m=db.membros.find(x=>x.id===edit.membros); if(m) m.nome=nome; edit.membros=null; toast('Membro atualizado'); }
   else { db.membros.push({id:uid(),nome,ativo:true}); focusApos='campo-membro'; }
-  await salvar(); render(); }
+  await salvar(); render(); } finally { _gravando=false; } }
 async function toggleAtivo(id){ const m=db.membros.find(x=>x.id===id); if(m){ m.ativo=!m.ativo; await salvar(); render(); } }
 async function setAjuste(id,v){ db.ajustes[id]=Math.max(0,parseInt(v,10)||0); await salvar(); }
 async function delMembro(id){ db.membros=db.membros.filter(m=>m.id!==id); db.restricoes=db.restricoes.filter(r=>r.membroId!==id); delete db.ajustes[id]; if(edit.membros===id) edit.membros=null; if(restricaoMembro===id) restricaoMembro=null; await salvar(); render(); }
 
 /* Locais */
-async function salvarLocal(){ const nome=(gv('campo-local')||'').trim(); if(!nome) return;
+async function salvarLocal(){ if(_gravando) return; _gravando=true; try{ const nome=(gv('campo-local')||'').trim(); if(!nome) return;
   if(edit.locais){ const l=db.locais.find(x=>x.id===edit.locais); if(l) l.nome=nome; edit.locais=null; toast('Local atualizado'); }
   else { db.locais.push({id:uid(),nome}); focusApos='campo-local'; }
-  await salvar(); render(); }
+  await salvar(); render(); } finally { _gravando=false; } }
 async function delLocal(id){ if(db.eventos.some(e=>e.localId===id)){ toast('Há eventos usando este local'); return; } db.locais=db.locais.filter(l=>l.id!==id); if(edit.locais===id) edit.locais=null; await salvar(); render(); }
 
 /* Tipos */
-async function salvarTipo(){ const t=(gv('campo-tipo')||'').trim(); if(!t) return;
+async function salvarTipo(){ if(_gravando) return; _gravando=true; try{ const t=(gv('campo-tipo')||'').trim(); if(!t) return;
   if(edit.tipos!=null){ const old=edit.tipos; const idx=db.tipos.indexOf(old); if(idx>=0) db.tipos[idx]=t; db.eventos.forEach(e=>{ if(e.tipo===old) e.tipo=t; }); edit.tipos=null; toast('Tipo atualizado'); }
   else { if(!db.tipos.includes(t)) db.tipos.push(t); focusApos='campo-tipo'; }
-  const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); }
+  const i=document.getElementById('campo-tipo'); if(i) i.value=''; await salvar(); render(); } finally { _gravando=false; } }
 async function delTipo(t){ db.tipos=db.tipos.filter(x=>x!==t); if(edit.tipos===t) edit.tipos=null; await salvar(); render(); }
-function opcoesTipo(sel){ return db.tipos.map(t=>`<option ${sel===t?'selected':''}>${esc(t)}</option>`).join('')+`<option value="__novo__">➕ Cadastrar novo tipo…</option>`; }
+function opcoesTipo(sel){ return `<option value="" disabled ${sel?'':'selected'}>— escolha o tipo —</option>`+db.tipos.map(t=>`<option ${sel===t?'selected':''}>${esc(t)}</option>`).join('')+`<option value="__novo__">➕ Cadastrar novo tipo…</option>`; }
 async function criarTipoInline(){
+  if(_gravando) return; _gravando=true; try{
   const inp=document.getElementById('ev-tipo-novo'); if(!inp) return;
   const t=(inp.value||'').trim(); if(!t){ inp.focus(); return; }
   if(!db.tipos.includes(t)) db.tipos.push(t);
@@ -657,6 +662,7 @@ async function criarTipoInline(){
   const lista=document.getElementById('lista-eventos'); /* atualiza o card de Tipos sem perder o formulário */
   const chips=document.querySelector('.typchips'); if(chips){ chips.innerHTML=db.tipos.map(x=>`<span class="typchip">${esc(x)}<span class="te" data-action="editTipo" data-t="${esc(x)}" title="Editar">${ico('edit')}</span><button data-action="delTipo" data-t="${esc(x)}" aria-label="Remover">×</button></span>`).join(''); }
   toast(`Tipo "${t}" criado`);
+  } finally { _gravando=false; }
 }
 function cancelarTipoNovo(){ const w=document.getElementById('ev-tipo-novo-wrap'); if(w) w.classList.add('hidden'); const inp=document.getElementById('ev-tipo-novo'); if(inp) inp.value=''; const sel=document.getElementById('ev-tipo'); if(sel && sel.value==='__novo__'){ sel.value=db.tipos[0]||''; } }
 
@@ -666,12 +672,14 @@ function calNav(delta){ if(restricaoCalAno==null){ restricaoCalAno=selAno; restr
 function toggleDiaRestricao(ds){ if(!restricaoMembro) return; if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===ds)) return; if(restricoesPendentes.includes(ds)) restricoesPendentes=restricoesPendentes.filter(x=>x!==ds); else restricoesPendentes.push(ds); render(); }
 function remDataPendente(d){ restricoesPendentes=restricoesPendentes.filter(x=>x!==d); render(); }
 async function salvarRestricoes(){
+  if(_gravando) return; _gravando=true; try{
   if(!restricaoMembro){ toast('Escolha o membro'); return; }
   if(!restricoesPendentes.length){ toast('Marque ao menos uma data'); return; }
   let add=0,dup=0;
   for(const d of restricoesPendentes){ if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===d)){ dup++; continue; } db.restricoes.push({id:uid(),membroId:restricaoMembro,data:d}); add++; }
   const nome=nomeMembro(restricaoMembro); restricoesPendentes=[];
   await salvar(); render(); toast(`${add} restrição(ões) para ${nome}${dup?` · ${dup} já existia(m)`:''}`);
+  } finally { _gravando=false; }
 }
 function addMaisRestricoes(mid){ restricaoMembro=mid; restricoesPendentes=[]; render(); window.scrollTo({top:0,behavior:'smooth'}); }
 async function delRestricao(id){ db.restricoes=db.restricoes.filter(r=>r.id!==id); await salvar(); render(); }
@@ -697,12 +705,13 @@ function lerFormEvento(){
   return ev;
 }
 async function salvarEvento(){
+  if(_gravando) return; _gravando=true; try{
   const d=lerFormEvento(); if(!d) return;
   const dupId=edit.eventos||null;
   if(db.eventos.some(x=> x.id!==dupId && x.tipo===d.tipo && x.localId===d.localId && (x.horario||'')===(d.horario||''))){ toast('Já existe um evento com o mesmo tipo, local e horário'); return; }
   if(edit.eventos){ const ev=db.eventos.find(x=>x.id===edit.eventos); if(ev){ const keep=ev.id; for(const k of Object.keys(ev)) delete ev[k]; Object.assign(ev,{id:keep},d); } edit.eventos=null; toast('Evento atualizado'); }
   else { db.eventos.push({id:uid(),...d}); toast('Evento cadastrado'); }
-  await salvar(); render(); }
+  await salvar(); render(); } finally { _gravando=false; } }
 async function delEvento(id){ db.eventos=db.eventos.filter(e=>e.id!==id); db.excecoes=db.excecoes.filter(e=>e.eventoId!==id); if(edit.eventos===id) edit.eventos=null; await salvar(); render(); }
 
 /* =========================================================================
@@ -890,6 +899,7 @@ function painelEscala(){
   let conflitos=0; ativas.forEach(o=>{ (atrib[o.key]||[]).forEach(id=>{ if(restritoNoDia(id,o.data)) conflitos++; }); });
   const bannerMover=movendo?`<div class="mover-banner">${ico('swap')}<div><strong>Movendo ${esc(nomeMembro(movendo.id))}</strong> — clique em outra pessoa para <strong>trocar</strong>, ou em <strong>“Mover para cá”</strong> num serviço para <strong>transferir</strong>.</div><button class="linkbtn" data-action="cancelarMover">Cancelar</button></div>`:'';
   const bannerConflito=conflitos>0?`<div class="notice" style="background:var(--red-soft);color:var(--red)">${ico('warn')}<div><strong>${conflitos} conflito(s) com restrições</strong> nesta escala — alguém está escalado em um dia indisponível (em vermelho abaixo). Clique em <strong>“Gerar novamente”</strong> para corrigir automaticamente.</div></div>`:'';
+  const bannerDisp=(function(){ const dm=dispAtiva(); if(dm){ return `<div class="notice" style="background:var(--green-soft);color:var(--green)">${ico('check')}<div><strong>${Object.keys(dm).length} disponibilidade(s)</strong> de ${MESES[selMes]} aplicadas ao gerar — “Não posso” bloqueia, “Prefiro” dá preferência.</div></div>`; } return db.eventos.length?`<div class="notice">${ico('info')}<div>Você ainda não puxou as disponibilidades de ${MESES[selMes]}. Vá em <strong>Restrições → Disponib.</strong> para carregar as respostas dos membros antes de gerar.</div></div>`:''; })();
   const porDia={}; occs.forEach(o=>{ (porDia[o.data]=porDia[o.data]||[]).push(o); }); const dias=Object.keys(porDia).sort();
   const corpo=dias.length===0?vazio('calendar','Nenhum evento neste mês', db.eventos.length?'Nenhuma ocorrência cai neste mês. Navegue entre os meses ou revise a recorrência.':'Cadastre locais e eventos para montar a escala.'):
     dias.map(data=>{ const f=formatData(data); return `<div class="day"><div class="day-head"><span class="d-week">${f.semFull}</span><span class="d-date">${f.dm}</span></div>${porDia[data].map(o=>occCard(o,atrib,occs)).join('')}</div>`; }).join('');
@@ -918,7 +928,7 @@ function painelEscala(){
       <div class="stat ${temAtrib?'ok':''}"><div class="n">${preenchidas}</div><div class="l">Preenchidas</div></div>
       ${faltando>0&&temAtrib?`<div class="stat warn"><div class="n">${faltando}</div><div class="l">Em aberto</div></div>`:``}
     </div>
-    <div class="grid-escala"><div>${bannerMover}${bannerConflito}${barras}${corpo}${detalhesComoFunciona()}</div><aside>${painelJustica(atrib)}</aside></div>`;
+    <div class="grid-escala"><div>${bannerMover}${bannerDisp}${bannerConflito}${barras}${corpo}${detalhesComoFunciona()}</div><aside>${painelJustica(atrib)}</aside></div>`;
 }
 function occCard(o,atrib,occs){
   const ids=atrib[o.key]||[]; const falta=Math.max(0,o.vagas-ids.length); const sel=selecionados.has(o.key);
@@ -1103,9 +1113,9 @@ function painelRestricoes(){
     </div>
     <p class="hint" style="margin-top:12px">Exporte a planilha do mês, compartilhe com o grupo (cada pessoa marca os dias em que não pode) e importe de volta — todas as restrições entram de uma vez.</p>`;
   const listHtml=`${cadHead(db.restricoes.length)}${barraFiltro('restricoes','Buscar por membro ou data (ex.: 18/07)...')}<div id="lista-restricoes">${listaRestricoes()}</div>`;
-  const sub=`<div class="subtabs">${subTab('restricoes','marcar','ban','Marcar')}${subTab('restricoes','cadastradas','check','Cadastradas ('+db.restricoes.length+')')}${subTab('restricoes','excel','save','Excel')}</div>`;
+  const sub=`<div class="subtabs">${subTab('restricoes','marcar','ban','Marcar')}${subTab('restricoes','cadastradas','check','Cadastradas ('+db.restricoes.length+')')}${subTab('restricoes','disponib','users','Disponib.')}${subTab('restricoes','excel','save','Excel')}</div>`;
   const cur=subAba.restricoes;
-  const body = cur==='cadastradas' ? listHtml : cur==='excel' ? excelHtml : marcarHtml;
+  const body = cur==='cadastradas' ? listHtml : cur==='excel' ? excelHtml : cur==='disponib' ? painelDisponib() : marcarHtml;
   return `<h2 class="sec">Restrições</h2>${noticeHtml}${sub}${body}`;
 }
 function calRestricoes(){
@@ -1205,6 +1215,7 @@ document.addEventListener('click', e=>{
     case 'editTipo': edit.tipos=t; render(); break;
     case 'delTipo': delTipo(t); break;
     case 'salvarRestricoes': salvarRestricoes(); break;
+    case 'puxarDisponibilidades': puxarDisponibilidades(); break;
     case 'addMaisRestricoes': addMaisRestricoes(mid); break;
     case 'delRestricao': delRestricao(id); break;
     case 'remDataPendente': remDataPendente(data); break;
@@ -1658,6 +1669,11 @@ function elegivelNoEvento(membroId, occ){
   if(ev&&ev.elegiveis&&ev.elegiveis.length) return ev.elegiveis.includes(membroId);
   return true;
 }
+/* Disponibilidades puxadas do formulário — só valem para o mês a que se referem. */
+function dispAtiva(){ return (dispMes && dispRef===chaveMes(selAno,selMes)) ? dispMes : null; }
+function indisponivelOcc(membroId, occKey){ const dm=dispAtiva(); const d=dm&&dm[membroId]; return !!(d && d.indisponiveis.has(occKey)); }
+function preferidoOcc(membroId, occKey){ const dm=dispAtiva(); const d=dm&&dm[membroId]; return !!(d && d.preferidos.has(occKey)); }
+function rotuloOcc(occKey){ const i=occKey.indexOf('|'); const evId=occKey.slice(0,i), data=occKey.slice(i+1); const ev=db.eventos.find(e=>e.id===evId); const f=formatData(data); return `${f.sem} ${f.dm}${ev?` · ${ev.tipo}`:''}`; }
 function painelFases(){
   const e=edit.fases?(db.fases||[]).find(f=>f.id===edit.fases):null;
   return `<h2 class="sec">Fases</h2>
@@ -1689,14 +1705,43 @@ function listaFases(){
     </div>`;
   }).join('');
 }
-async function salvarFase(){ const nome=(gv('campo-fase')||'').trim(); if(!nome) return; if(!db.fases) db.fases=[];
+async function salvarFase(){ if(_gravando) return; _gravando=true; try{ const nome=(gv('campo-fase')||'').trim(); if(!nome) return; if(!db.fases) db.fases=[];
   if(edit.fases){ const fa=db.fases.find(x=>x.id===edit.fases); if(fa) fa.nome=nome; edit.fases=null; }
   else { db.fases.push({id:uid(), nome, datas:[]}); focusApos='campo-fase'; }
-  await salvar(); render(); }
+  await salvar(); render(); } finally { _gravando=false; } }
 async function delFase(id){ if(!db.fases) return; db.fases=db.fases.filter(f=>f.id!==id); db.membros.forEach(m=>{ if(m.faseId===id) m.faseId=null; }); if(edit.fases===id) edit.fases=null; await salvar(); render(); toast('Fase removida'); }
-async function addFaseData(id){ const d=gv('fdata-'+id); if(!d){ toast('Escolha uma data'); return; } const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return; if(!fa.datas) fa.datas=[]; if(fa.datas.includes(d)){ toast('Essa data já está cadastrada'); return; } fa.datas.push(d); await salvar(); render(); }
+async function addFaseData(id){ if(_gravando) return; _gravando=true; try{ const d=gv('fdata-'+id); if(!d){ toast('Escolha uma data'); return; } const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return; if(!fa.datas) fa.datas=[]; if(fa.datas.includes(d)){ toast('Essa data já está cadastrada'); return; } fa.datas.push(d); await salvar(); render(); } finally { _gravando=false; } }
 async function delFaseData(id,data){ const fa=(db.fases||[]).find(x=>x.id===id); if(!fa) return; fa.datas=(fa.datas||[]).filter(x=>x!==data); await salvar(); render(); }
 async function setMembroFase(id, faseId){ const m=db.membros.find(x=>x.id===id); if(!m) return; m.faseId=faseId||null; await salvar(); render(); }
+
+/* ---------- Puxar disponibilidades (formulário -> motor) ---------- */
+async function puxarDisponibilidades(){
+  try{
+    const ref=chaveMes(selAno,selMes);
+    dispMes=await sbDisponibilidades(ref); dispRef=ref;
+    render();
+    toast(`${Object.keys(dispMes).length} disponibilidade(s) de ${MESES[selMes]} carregada(s)`);
+  }catch(e){ console.error(e); toast('Erro ao puxar disponibilidades'); }
+}
+function painelDisponib(){
+  const ativos=db.membros.filter(m=>m.ativo);
+  const dm=dispAtiva();
+  const puxar=`<div class="exp-bar xls"><span class="lbl">${ico('refresh')} Disponibilidades de ${MESES[selMes]} ${selAno}:</span><button class="btn primary" data-action="puxarDisponibilidades">${dm?'Atualizar':'Puxar'} disponibilidades</button><span class="hint" style="margin:0">lê o que os membros enviaram no link público</span></div>`;
+  if(!dm) return puxar+`<p class="hint" style="margin-top:12px">Clique para carregar as respostas de <strong>${MESES[selMes]}</strong> (o mês selecionado na aba Escala). Ao gerar, elas são aplicadas automaticamente: <strong style="color:var(--red)">Não posso</strong> bloqueia a ocorrência e <strong style="color:var(--gold-deep)">Prefiro</strong> dá preferência no desempate.</p>`;
+  const responderam=Object.keys(dm);
+  const faltam=ativos.filter(m=>!dm[m.id]);
+  const resumo=`<div class="summary"><div class="stat ok"><div class="n">${responderam.length}</div><div class="l">Responderam</div></div><div class="stat ${faltam.length?'warn':''}"><div class="n">${faltam.length}</div><div class="l">Faltam</div></div></div>`;
+  const faltamHtml=faltam.length?`<div class="card pad" style="margin-bottom:12px"><strong>Ainda não responderam (${faltam.length}):</strong><div class="chips" style="margin-top:8px;padding-left:0">${faltam.map(m=>`<span class="chip rest">${esc(m.nome)}</span>`).join('')}</div></div>`:`<div class="notice" style="background:var(--green-soft);color:var(--green)">${ico('check')}<div>Todos os membros ativos responderam.</div></div>`;
+  const detalhes=responderam.map(mid=>{ const d=dm[mid]; const nao=[...d.indisponiveis], pref=[...d.preferidos];
+    return `<div class="row" style="align-items:flex-start"><div class="grow"><div class="name">${esc(nomeMembro(mid))}</div>
+      ${nao.length?`<div class="meta" style="margin-top:4px"><strong style="color:var(--red)">Não posso:</strong> ${nao.map(k=>esc(rotuloOcc(k))).join(' · ')}</div>`:''}
+      ${pref.length?`<div class="meta" style="margin-top:2px"><strong style="color:var(--gold-deep)">Prefiro:</strong> ${pref.map(k=>esc(rotuloOcc(k))).join(' · ')}</div>`:''}
+      ${(!nao.length&&!pref.length)?`<div class="meta" style="margin-top:4px">Disponível em tudo.</div>`:''}
+      ${d.observacoes?`<div class="meta" style="margin-top:2px;font-style:italic">"${esc(d.observacoes)}"</div>`:''}
+    </div></div>`;
+  }).join('');
+  return puxar+resumo+faltamHtml+`<div class="cad-head"><span>Respostas</span><span class="cad-count">${responderam.length}</span></div>${detalhes}`;
+}
 init();
 </script>
 </body>
