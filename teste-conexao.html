@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teste de conexão — Escala da Liturgia</title>
+<style>
+  body{ font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; max-width:640px;
+        margin:40px auto; padding:0 20px; background:#F1EFE8; color:#15233F; }
+  h1{ font-size:20px; }
+  .status{ padding:12px 14px; border-radius:10px; margin:16px 0; font-weight:600; }
+  .ok{ background:#e3f4e9; color:#0a6b34; }
+  .erro{ background:#fbe6e4; color:#9b1c14; }
+  .carregando{ background:#eef1f6; color:#41527a; }
+  table{ width:100%; border-collapse:collapse; margin-top:12px; background:#fff;
+         border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  th,td{ text-align:left; padding:10px 14px; border-bottom:1px solid #eee; font-size:14px; }
+  th{ background:#002554; color:#fff; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  tr:last-child td{ border-bottom:none; }
+  .fase{ color:#8C6216; font-weight:600; }
+  code{ background:#eae7de; padding:2px 6px; border-radius:5px; font-size:13px; }
+</style>
+</head>
+<body>
+  <h1>Teste de conexão com o Supabase</h1>
+  <p>Se tudo estiver certo, os 26 membros aparecem abaixo com suas fases —
+     provando que a URL, a chave pública e o RLS estão funcionando.</p>
+
+  <div id="status" class="status carregando">Conectando…</div>
+  <div id="resultado"></div>
+
+  <!-- 1) Biblioteca do Supabase via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- 2) Nossas credenciais + cliente -->
+  <script src="config.js"></script>
+  <!-- 3) O teste -->
+  <script>
+    (async () => {
+      const status = document.getElementById('status');
+      const resultado = document.getElementById('resultado');
+      try {
+        // Lê membros + o nome da fase (join via foreign key).
+        const { data, error } = await sb
+          .from('membros')
+          .select('nome, ativo, fases ( nome )')
+          .order('nome', { ascending: true });
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          status.className = 'status erro';
+          status.textContent = 'Conectou, mas não veio nenhum membro. ' +
+            'Rodou o seed (supabase-seed-membros.sql)? Ou o RLS de leitura em membros não está ativo.';
+          return;
+        }
+
+        status.className = 'status ok';
+        status.textContent = `Conexão OK! ${data.length} membros carregados do Supabase.`;
+
+        let html = '<table><thead><tr><th>Nome</th><th>Fase</th><th>Ativo</th></tr></thead><tbody>';
+        for (const m of data) {
+          const fase = m.fases ? m.fases.nome : '—';
+          html += `<tr><td>${m.nome}</td><td class="fase">${fase}</td><td>${m.ativo ? 'sim' : 'não'}</td></tr>`;
+        }
+        html += '</tbody></table>';
+        resultado.innerHTML = html;
+
+      } catch (e) {
+        status.className = 'status erro';
+        status.innerHTML = 'Falha ao conectar: <code>' + (e.message || e) + '</code>' +
+          '<br><br>Verifique a URL e a chave em <code>config.js</code>, ' +
+          'e se o RLS permite <code>anon</code> ler a tabela <code>membros</code>.';
+        console.error(e);
+      }
+    })();
+  </script>
+</body>
+</html>
