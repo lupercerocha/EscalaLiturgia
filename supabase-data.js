@@ -81,7 +81,7 @@ async function sbCarregar() {
       modoMensal: e.modo_mensal, fim: e.fim || { tipo: 'nunca' }, elegiveis: e.elegiveis || []
     })),
     restricoes: (restricoes.data || []).map(r => ({
-      id: r.id, membroId: r.membro_id, data: r.data
+      id: r.id, membroId: r.membro_id, data: r.data, eventoId: r.evento_id || null
     })),
     fases: (fases.data || []).map(f => ({
       id: f.id, nome: f.nome,
@@ -166,7 +166,7 @@ async function sbSalvar(db) {
 
   // ---- RESTRIÇÕES ----
   const restricoes = db.restricoes.map(r => ({
-    id: r.id, membro_id: r.membroId, data: r.data, origem: r.origem || 'manual'
+    id: r.id, membro_id: r.membroId, data: r.data, origem: r.origem || 'manual', evento_id: r.eventoId || null
   }));
   if (restricoes.length) _push(await sb.from('restricoes').upsert(restricoes));
   await podarOrfaos('restricoes', db.restricoes.map(r => r.id));
@@ -190,3 +190,26 @@ async function sbSalvar(db) {
   if (erros.length) throw new Error(erros.join(' | '));
 }
 window.sbSalvar = sbSalvar;
+
+/* ============ DISPONIBILIDADES (coordenador lê; NÃO entra no sync) ============
+   Retorna a resposta MAIS RECENTE de cada membro para o mês (referencia).
+   Estrutura: { membroId: {indisponiveis:Set, preferidos:Set, observacoes, quando} } */
+async function sbDisponibilidades(referencia) {
+  const { data, error } = await sb.from('disponibilidades')
+    .select('membro_id,indisponiveis,preferidos,observacoes,created_at')
+    .eq('referencia', referencia)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  const map = {};
+  for (const r of (data || [])) {
+    if (map[r.membro_id]) continue;         // já pegamos a mais recente (ordem desc)
+    map[r.membro_id] = {
+      indisponiveis: new Set(r.indisponiveis || []),
+      preferidos:    new Set(r.preferidos || []),
+      observacoes:   r.observacoes || '',
+      quando:        r.created_at
+    };
+  }
+  return map;
+}
+window.sbDisponibilidades = sbDisponibilidades;

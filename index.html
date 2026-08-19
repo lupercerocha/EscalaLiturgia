@@ -181,7 +181,7 @@
   .cal-day:hover{border-color:var(--primary);}
   .cal-day.blank{visibility:hidden; cursor:default;}
   .cal-day.pend{background:var(--amber); border-color:var(--amber); color:#fff;}
-  .cal-day.saved{background:var(--red-soft); border-color:var(--red); color:var(--red); cursor:default;}
+  .cal-day.saved{background:var(--red-soft); border-color:var(--red); color:var(--red);}
   .cal-day.today{outline:2px solid var(--gold);}
   .cal-legend{display:flex; gap:16px; flex-wrap:wrap; margin-top:11px; font-size:11px; color:var(--sub);}
   .cal-legend .k{display:inline-flex; align-items:center; gap:6px;}
@@ -386,6 +386,33 @@
   .modal-linhas{ margin:0 0 18px; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:6px; }
   .modal-linhas li{ font-size:13.5px; color:var(--ink); padding:8px 11px; background:var(--bg); border-radius:8px; border:1px solid var(--line); }
   .modal-actions{ display:flex; gap:8px; justify-content:flex-end; }
+  /* ===== Tabela de Membros (cabeçalho ordenável) ===== */
+  .mem-head{ display:flex; align-items:center; gap:12px; padding:4px 14px 8px; }
+  .mem-head .sp-switch{ width:40px; flex:none; }
+  .th{ background:none; border:none; padding:2px 0; font:inherit; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--sub); cursor:pointer; display:inline-flex; align-items:center; gap:3px; }
+  .th:hover{ color:var(--ink); }
+  .th.on{ color:var(--gold-deep); }
+  .mem-col-nome{ flex:1; min-width:0; }
+  .mem-col-fase{ width:112px; flex:none; }
+  .mem-col-num{ width:82px; flex:none; text-align:center; justify-content:center; }
+  .mem-head .sp-acoes{ width:196px; flex:none; text-align:right; }
+  .mem-click{ all:unset; display:flex; align-items:center; gap:12px; flex:1; min-width:0; cursor:pointer; border-radius:8px; padding:4px 6px; margin:-4px -6px; box-sizing:border-box; }
+  .mem-click:hover{ background:var(--gold-soft); }
+  .mem-click .mem-col-fase{ color:var(--sub); font-size:12.5px; }
+  .mem-click .mem-col-num{ font-variant-numeric:tabular-nums; color:var(--ink); }
+  .mem-click .mem-col-num.strong{ font-weight:700; }
+  .tag-inativo{ font-size:10.5px; font-weight:600; color:var(--sub); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:1px 6px; margin-left:8px; }
+  /* ===== Seletor "dia inteiro ou evento específico" nas Restrições ===== */
+  .cal-day.parcial{ background:var(--gold-soft); border-color:var(--gold); color:var(--gold-deep); }
+  .cal-day.aberto{ outline:2px solid var(--navy); }
+  .cal-legend .lg{ width:13px; height:13px; border-radius:4px; display:inline-block; margin-right:4px; vertical-align:-2px; border:1px solid transparent; }
+  .cal-legend .lg.pend{ background:var(--amber); }
+  .cal-legend .lg.saved{ background:var(--red-soft); border-color:var(--red); }
+  .cal-legend .lg.parcial{ background:var(--gold-soft); border-color:var(--gold); }
+  .dia-seletor{ margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:11px; background:var(--bg); }
+  .chips-wrap{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip.sel-chip{ cursor:pointer; background:var(--paper); border:1px solid var(--line); color:var(--ink); }
+  .chip.sel-chip.on{ background:var(--navy); border-color:var(--navy); color:#fff; }
 </style>
 </head>
 <body>
@@ -557,6 +584,10 @@ let edit={membros:null, locais:null, eventos:null, tipos:null, fases:null};
 let filtros={membros:'', locais:'', eventos:'', restricoes:'', fases:''};
 let selecionados=new Set();
 let restricaoMembro=null, restricoesPendentes=[], restricaoCalAno=null, restricaoCalMes=null;
+/* restricoesPendentes agora é [{data, eventoId}] — eventoId null = dia inteiro */
+let restricaoDataAberta=null;        /* data cujo seletor "quais eventos" está aberto no calendário */
+let restricaoDiaInteiro=false;       /* chip "Dia inteiro" marcado no seletor aberto */
+let restricaoEventosSel=new Set();   /* eventoIds marcados no seletor aberto */
 let confirmReset=false, focusApos=null;
 let vista='normal', calDiaSel=null, previaModo=null;
 let movendo=null;
@@ -564,6 +595,8 @@ let subAba={eventos:'eventos', restricoes:'marcar'};
 let dispMes=null, dispRef=null;   /* disponibilidades puxadas do formulário (mês corrente) */
 let _gravando=false;              /* trava anti duplo-clique: uma gravação por vez */
 let confirmPendente=null;         /* {titulo,linhas,fn,cor} - modal de confirmar incluir/alterar/excluir */
+let membrosSort={col:'nome', dir:'asc'};  /* ordenação da tabela de membros */
+let membroDetalhe=null;           /* {id, aba:'atual'|'anterior'|'todos'} - modal de detalhe do membro */
 
 /* ---------- Persistência ---------- */
 const SKEY='liturgia_v2';   /* nova chave: o app começa do zero */
@@ -592,6 +625,61 @@ async function sairDoApp(){ try{ await sbAuth.sair(); }catch(e){} mostrarLogin()
    ========================================================================= */
 function creditosBase(exceto){ const c={}; for(const id in (db.ajustes||{})) c[id]=db.ajustes[id]||0; for(const [chave,e] of Object.entries(db.escalasSalvas||{})){ if(chave===exceto) continue; for(const ids of Object.values(e.atribuicoes||{})) ids.forEach(id=>{ c[id]=(c[id]||0)+1; }); } return c; }
 const creditosTotais=()=>creditosBase(null);
+
+/* ---------- Dashboard de serviços por membro (Mês Atual / Anterior / Todos) ---------- */
+function rangeMesAtual(){ const d=new Date(); return { ini: iso(d.getFullYear(),d.getMonth(),1), fim: hojeISO() }; }
+function rangeMesAnterior(){ const d=new Date(); let ano=d.getFullYear(), mes=d.getMonth()-1; if(mes<0){ mes=11; ano--; } return { ini: iso(ano,mes,1), fim: iso(ano,mes,diasDoMes(ano,mes)), mes, ano }; }
+function servicosDoMembroNoPeriodo(membroId, ini, fim){
+  const out=[];
+  for(const e of Object.values(db.escalasSalvas||{})){
+    for(const [occKey, ids] of Object.entries(e.atribuicoes||{})){
+      if(!ids || !ids.includes(membroId)) continue;
+      const i=occKey.indexOf('|'); const eventoId=occKey.slice(0,i), data=occKey.slice(i+1);
+      if(ini && data<ini) continue; if(fim && data>fim) continue;
+      const ev=db.eventos.find(x=>x.id===eventoId);
+      out.push({ data, tipo: ev?ev.tipo:'(evento removido)', local: ev?nomeLocal(ev.localId):'' });
+    }
+  }
+  out.sort((a,b)=> b.data.localeCompare(a.data));
+  return out;
+}
+function ordenarMembros(col){
+  if(!col) return;
+  if(membrosSort.col===col){ membrosSort.dir = membrosSort.dir==='asc'?'desc':'asc'; }
+  else { membrosSort.col=col; membrosSort.dir=(col==='nome'||col==='fase')?'asc':'desc'; }
+  render();
+}
+function verMembro(id){ if(!id) return; membroDetalhe={id, aba:'atual'}; render(); }
+function membroDetalheAba(id,modo){ if(!membroDetalhe) return; membroDetalhe={id:id||membroDetalhe.id, aba:modo||'atual'}; render(); }
+function fecharMembroDetalhe(){ membroDetalhe=null; render(); }
+function modalMembroDetalhe(){
+  if(!membroDetalhe) return '';
+  const m=db.membros.find(x=>x.id===membroDetalhe.id); if(!m){ membroDetalhe=null; return ''; }
+  const aba=membroDetalhe.aba||'atual';
+  const rAtual=rangeMesAtual(), rAnterior=rangeMesAnterior();
+  const dados = aba==='atual' ? servicosDoMembroNoPeriodo(m.id, rAtual.ini, rAtual.fim)
+              : aba==='anterior' ? servicosDoMembroNoPeriodo(m.id, rAnterior.ini, rAnterior.fim)
+              : servicosDoMembroNoPeriodo(m.id, null, null);
+  const hoje=new Date();
+  const labelPeriodo = aba==='atual' ? `01 a ${pad(hoje.getDate())} de ${MESES[hoje.getMonth()]}`
+                      : aba==='anterior' ? `${MESES[rAnterior.mes]} ${rAnterior.ano}`
+                      : 'todo o histórico salvo';
+  const fase=(db.fases||[]).find(f=>f.id===m.faseId);
+  const lista = dados.length
+    ? `<ul class="modal-linhas">${dados.map(d=>`<li>${formatData(d.data).dmy} · ${esc(d.tipo)}${d.local?` · ${esc(d.local)}`:''}</li>`).join('')}</ul>`
+    : `<p class="hint" style="margin:0 0 16px">Nenhum serviço registrado neste período.</p>`;
+  return `<div class="modalbg"><div class="modalcard" style="max-width:480px">
+      <h3>${esc(m.nome)}</h3>
+      <p class="hint" style="margin:-6px 0 12px">${fase?esc(fase.nome):'Sem fase'} · ${dados.length} serviço(s) · ${esc(labelPeriodo)}</p>
+      <div class="subtabs" style="margin-bottom:12px">
+        <button class="subtab ${aba==='atual'?'on':''}" data-action="membroDetalheAba" data-id="${m.id}" data-modo="atual">Mês Atual</button>
+        <button class="subtab ${aba==='anterior'?'on':''}" data-action="membroDetalheAba" data-id="${m.id}" data-modo="anterior">Mês Anterior</button>
+        <button class="subtab ${aba==='todos'?'on':''}" data-action="membroDetalheAba" data-id="${m.id}" data-modo="todos">Todos</button>
+      </div>
+      ${lista}
+      <div class="modal-actions"><button class="btn primary" data-action="fecharMembroDetalhe">Fechar</button></div>
+    </div></div>`;
+}
 function conflita(a,b){ return a.data===b.data; } /* regra: no máximo 1 serviço por pessoa por dia */
 function ocupado(atrib, occs, membroId, alvo){ for(const o of occs){ if(o.key===alvo.key) continue; if((atrib[o.key]||[]).includes(membroId) && conflita(o, alvo)) return true; } return false; }
 function alocar(occs, ano, mes, chave){
@@ -599,7 +687,7 @@ function alocar(occs, ano, mes, chave){
   ativos.forEach(m=>{ credito[m.id]=base[m.id]||0; ultimo[m.id]=''; });
   const atrib={};
   for(const o of occs){ if(o.cancelada) continue;
-    const cand=ativos.filter(m=> !restritoNoDia(m.id,o.data) && !indisponivelOcc(m.id,o.key) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o));
+    const cand=ativos.filter(m=> !restritoNaOcorrencia(m.id,o.data,o.eventoId) && !indisponivelOcc(m.id,o.key) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o));
     cand.sort((a,b)=>{
       const ma=credito[a.id]-(base[a.id]||0), mb=credito[b.id]-(base[b.id]||0);
       if(ma!==mb) return ma-mb;                                                       // 1) menos serviços ESTE mês (justiça vem primeiro)
@@ -612,7 +700,7 @@ function alocar(occs, ano, mes, chave){
   }
   return atrib;
 }
-function disponiveis(o, atrib, occs){ return db.membros.filter(m=> m.ativo && !(atrib[o.key]||[]).includes(m.id) && !restritoNoDia(m.id,o.data) && !indisponivelOcc(m.id,o.key) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o)); }
+function disponiveis(o, atrib, occs){ return db.membros.filter(m=> m.ativo && !(atrib[o.key]||[]).includes(m.id) && !restritoNaOcorrencia(m.id,o.data,o.eventoId) && !indisponivelOcc(m.id,o.key) && elegivelNoEvento(m.id,o) && !ocupado(atrib,occs,m.id,o)); }
 function atribuicoesDoMes(){
   const chave=chaveMes(selAno,selMes);
   if(escalaAtual && escalaAtual.chave===chave && Object.keys(escalaAtual.atribuicoes).length) return {occs:construirOccs(selAno,selMes), atrib:escalaAtual.atribuicoes};
@@ -624,7 +712,25 @@ function atribuicoesDoMes(){
    ========================================================================= */
 function setMes(ano, mes){ selAno=ano; selMes=mes; selecionados.clear(); const chave=chaveMes(ano,mes); escalaAtual = db.escalasSalvas[chave] ? {chave, atribuicoes:JSON.parse(JSON.stringify(db.escalasSalvas[chave].atribuicoes))} : null; render(); }
 function navMes(delta){ const d=new Date(selAno,selMes+delta,1); setMes(d.getFullYear(),d.getMonth()); }
-function gerar(){ movendo=null; const chave=chaveMes(selAno,selMes); const occs=construirOccs(selAno,selMes); escalaAtual={chave,atribuicoes:alocar(occs,selAno,selMes,chave)}; render(); toast('Escala gerada'); }
+function gerar(){
+  const chave=chaveMes(selAno,selMes);
+  const occs=construirOccs(selAno,selMes);
+  const ativas=occs.filter(o=>!o.cancelada);
+  const temAtrib=escalaAtual&&escalaAtual.chave===chave&&Object.keys(escalaAtual.atribuicoes).length>0;
+  const linhas=[`${MESES[selMes]} ${selAno} · ${ativas.length} ocorrência(s)`];
+  if(temAtrib) linhas.push('Isso substitui as atribuições atuais na tela (só afeta a nuvem se você clicar em "Salvar escala do mês" depois).');
+  pedirConfirmacao(temAtrib?'Gerar escala novamente?':'Gerar escala?', linhas, ()=>{
+    movendo=null; escalaAtual={chave,atribuicoes:alocar(occs,selAno,selMes,chave)}; render(); toast('Escala gerada');
+  });
+}
+function zerarEscala(){
+  const chave=chaveMes(selAno,selMes);
+  const temAtrib=escalaAtual&&escalaAtual.chave===chave&&Object.keys(escalaAtual.atribuicoes).length>0;
+  if(!temAtrib){ toast('Não há escala gerada para zerar'); return; }
+  pedirConfirmacao('Zerar escala da tela', [`${MESES[selMes]} ${selAno}`, 'Limpa as atribuições mostradas aqui. A versão salva na nuvem só muda se você clicar em "Salvar escala do mês" depois de zerar.'], ()=>{
+    escalaAtual={chave, atribuicoes:{}}; movendo=null; render(); toast('Escala zerada');
+  }, 'red');
+}
 function salvarEscala(){
   if(!escalaAtual) return;
   const qtd=Object.values(escalaAtual.atribuicoes).reduce((s,a)=>s+a.length,0);
@@ -738,25 +844,58 @@ function criarTipoInline(){
 function cancelarTipoNovo(){ const w=document.getElementById('ev-tipo-novo-wrap'); if(w) w.classList.add('hidden'); const inp=document.getElementById('ev-tipo-novo'); if(inp) inp.value=''; const sel=document.getElementById('ev-tipo'); if(sel && sel.value==='__novo__'){ sel.value=db.tipos[0]||''; } }
 
 /* Restrições — calendário multi-seleção + lote por membro */
-function setRestricaoMembro(id){ restricaoMembro=id||null; restricoesPendentes=[]; render(); }
-function calNav(delta){ if(restricaoCalAno==null){ restricaoCalAno=selAno; restricaoCalMes=selMes; } const d=new Date(restricaoCalAno, restricaoCalMes+delta, 1); restricaoCalAno=d.getFullYear(); restricaoCalMes=d.getMonth(); render(); }
-function toggleDiaRestricao(ds){ if(!restricaoMembro) return; if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===ds)) return; if(restricoesPendentes.includes(ds)) restricoesPendentes=restricoesPendentes.filter(x=>x!==ds); else restricoesPendentes.push(ds); render(); }
-function remDataPendente(d){ restricoesPendentes=restricoesPendentes.filter(x=>x!==d); render(); }
+function setRestricaoMembro(id){ restricaoMembro=id||null; restricoesPendentes=[]; restricaoDataAberta=null; restricaoDiaInteiro=false; restricaoEventosSel=new Set(); render(); }
+function calNav(delta){ if(restricaoCalAno==null){ restricaoCalAno=selAno; restricaoCalMes=selMes; } const d=new Date(restricaoCalAno, restricaoCalMes+delta, 1); restricaoCalAno=d.getFullYear(); restricaoCalMes=d.getMonth(); restricaoDataAberta=null; render(); }
+function eventosNoDia(ds){
+  const p=ds.split('-').map(Number); const occs=construirOccs(p[0], p[1]-1);
+  return occs.filter(o=>o.data===ds && !o.cancelada);
+}
+function cliqueDiaRestricao(ds){
+  if(!restricaoMembro) return;
+  const evsDia=eventosNoDia(ds);
+  if(evsDia.length<=1){ addPendente(ds, null); return; }              // só 1 (ou nenhum) evento nesse dia: atalho, marca dia inteiro direto
+  restricaoDataAberta=(restricaoDataAberta===ds)?null:ds;
+  restricaoDiaInteiro=false; restricaoEventosSel=new Set();
+  render();
+}
+function toggleChipDiaInteiro(){ restricaoDiaInteiro=!restricaoDiaInteiro; if(restricaoDiaInteiro) restricaoEventosSel=new Set(); render(); }
+function toggleChipEvento(eventoId){ if(restricaoEventosSel.has(eventoId)) restricaoEventosSel.delete(eventoId); else restricaoEventosSel.add(eventoId); restricaoDiaInteiro=false; render(); }
+function confirmarSelecaoDia(){
+  const ds=restricaoDataAberta; if(!ds) return;
+  if(restricaoDiaInteiro){ addPendente(ds,null); }
+  else if(restricaoEventosSel.size){ restricaoEventosSel.forEach(evId=>addPendente(ds,evId)); }
+  else { toast('Escolha "Dia inteiro" ou pelo menos um serviço'); return; }
+  restricaoDataAberta=null; restricaoDiaInteiro=false; restricaoEventosSel=new Set(); render();
+}
+function cancelarSeletorDia(){ restricaoDataAberta=null; restricaoDiaInteiro=false; restricaoEventosSel=new Set(); render(); }
+function addPendente(data, eventoId){
+  eventoId=eventoId||null;
+  if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===data&&(r.eventoId||null)===eventoId)){ toast('Já é uma restrição salva'); return; }
+  const jaPend=restricoesPendentes.some(p=>p.data===data&&(p.eventoId||null)===eventoId);
+  if(jaPend) restricoesPendentes=restricoesPendentes.filter(p=>!(p.data===data&&(p.eventoId||null)===eventoId));
+  else restricoesPendentes=[...restricoesPendentes,{data,eventoId}];
+  render();
+}
+function remPendente(data,eventoId){ eventoId=eventoId||null; restricoesPendentes=restricoesPendentes.filter(p=>!(p.data===data&&(p.eventoId||null)===eventoId)); render(); }
 function salvarRestricoes(){
   if(!restricaoMembro){ toast('Escolha o membro'); return; }
   if(!restricoesPendentes.length){ toast('Marque ao menos uma data'); return; }
   if(_gravando) return; _gravando=true;
   const nome=nomeMembro(restricaoMembro);
   let add=0,dup=0;
-  for(const d of restricoesPendentes){ if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===d)){ dup++; continue; } db.restricoes.push({id:uid(),membroId:restricaoMembro,data:d}); add++; }
+  for(const p of restricoesPendentes){
+    if(db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===p.data&&(r.eventoId||null)===(p.eventoId||null))){ dup++; continue; }
+    db.restricoes.push({id:uid(),membroId:restricaoMembro,data:p.data,eventoId:p.eventoId||null}); add++;
+  }
   restricoesPendentes=[];
   render(); toast(`${add} restrição(ões) para ${nome}${dup?` · ${dup} já existia(m)`:''}`); salvar();
   _gravando=false;
 }
-function addMaisRestricoes(mid){ restricaoMembro=mid; restricoesPendentes=[]; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+function addMaisRestricoes(mid){ restricaoMembro=mid; restricoesPendentes=[]; restricaoDataAberta=null; render(); window.scrollTo({top:0,behavior:'smooth'}); }
 function delRestricao(id){
   const r=db.restricoes.find(x=>x.id===id); if(!r) return;
-  pedirConfirmacao('Remover restrição', [`${nomeMembro(r.membroId)} — ${formatData(r.data).dmy}`], ()=>{
+  const ev=r.eventoId?db.eventos.find(x=>x.id===r.eventoId):null;
+  pedirConfirmacao('Remover restrição', [`${nomeMembro(r.membroId)} — ${formatData(r.data).dmy}${ev?` · ${ev.tipo}`:' · dia inteiro'}`], ()=>{
     db.restricoes=db.restricoes.filter(x=>x.id!==id);
     render(); toast('Restrição removida'); salvar();
   }, 'red');
@@ -975,7 +1114,7 @@ function render(){
         ? `<span class="tiny" style="display:inline-flex; gap:8px; align-items:center; flex-wrap:wrap">Descartar alterações locais e recarregar do servidor? <button class="btn ghost" data-action="confirmarReset" style="padding:6px 12px">Sim, recarregar</button><button class="btn ghost" data-action="cancelReset" style="padding:6px 12px">Cancelar</button></span>`
         : `<span style="display:inline-flex;gap:14px;align-items:center;flex-wrap:wrap"><button class="linkbtn" data-action="pedirReset" style="color:var(--sub);display:inline-flex;align-items:center;gap:6px">${ico('rotate')} Recarregar da nuvem</button><button class="linkbtn" data-action="trocarSenha" style="color:var(--sub)">Trocar senha</button><button class="linkbtn" data-action="logout" style="color:var(--sub)">Sair</button></span>`}
     </footer>
-    ${modalConfirmacao()}`;
+    ${modalConfirmacao()}${modalMembroDetalhe()}`;
   if(document.getElementById('ev-freq')) atualizarRecorrencia();
   if(focusApos){ const el=document.getElementById(focusApos); if(el) el.focus(); focusApos=null; }
 }
@@ -997,7 +1136,7 @@ function painelEscala(){
   const totalVagas=ativas.reduce((s,o)=>s+o.vagas,0);
   const preenchidas=ativas.reduce((s,o)=>s+Math.min((atrib[o.key]||[]).length,o.vagas),0);
   const faltando=totalVagas-preenchidas;
-  let conflitos=0; ativas.forEach(o=>{ (atrib[o.key]||[]).forEach(id=>{ if(restritoNoDia(id,o.data)) conflitos++; }); });
+  let conflitos=0; ativas.forEach(o=>{ (atrib[o.key]||[]).forEach(id=>{ if(restritoNaOcorrencia(id,o.data,o.eventoId)) conflitos++; }); });
   const bannerMover=movendo?`<div class="mover-banner">${ico('swap')}<div><strong>Movendo ${esc(nomeMembro(movendo.id))}</strong> — clique em outra pessoa para <strong>trocar</strong>, ou em <strong>“Mover para cá”</strong> num serviço para <strong>transferir</strong>.</div><button class="linkbtn" data-action="cancelarMover">Cancelar</button></div>`:'';
   const bannerConflito=conflitos>0?`<div class="notice" style="background:var(--red-soft);color:var(--red)">${ico('warn')}<div><strong>${conflitos} conflito(s) com restrições</strong> nesta escala — alguém está escalado em um dia indisponível (em vermelho abaixo). Clique em <strong>“Gerar novamente”</strong> para corrigir automaticamente.</div></div>`:'';
   const bannerDisp=(function(){ const dm=dispAtiva(); if(dm){ return `<div class="notice" style="background:var(--green-soft);color:var(--green)">${ico('check')}<div><strong>${Object.keys(dm).length} disponibilidade(s)</strong> de ${MESES[selMes]} aplicadas ao gerar — “Não posso” bloqueia, “Prefiro” dá preferência.</div></div>`; } return db.eventos.length?`<div class="notice">${ico('info')}<div>Você ainda não puxou as disponibilidades de ${MESES[selMes]}. Vá em <strong>Restrições → Disponib.</strong> para carregar as respostas dos membros antes de gerar.</div></div>`:''; })();
@@ -1008,6 +1147,7 @@ function painelEscala(){
     <div class="section-actions">
       <button class="btn primary" data-action="gerar">${ico('refresh')} ${temAtrib?'Gerar novamente':'Gerar escala'}</button>
       <button class="btn gold" data-action="salvarEscala" ${temAtrib?'':'disabled'}>${ico('save')} Salvar escala do mês</button>
+      ${temAtrib?`<button class="btn ghost" data-action="zerarEscala" style="color:var(--red);border-color:var(--red)">${ico('trash')} Zerar escala</button>`:``}
       ${temAtrib?`<button class="btn ghost" data-action="abrirCalendario">${ico('calendar')} Calendário</button>`:``}
       ${salva?`<span class="badge full" style="align-self:center">${ico('check')} salva</span>`:``}
     </div>
@@ -1036,9 +1176,9 @@ function occCard(o,atrib,occs){
   if(o.cancelada){ return `<div class="occ cancel"><div class="occ-top"><div class="occ-main"><div class="occ-title" style="text-decoration:line-through"><span class="type">${esc(o.tipo)}</span> · ${esc(nomeLocal(o.localId))}</div><div class="occ-meta">Cancelado neste mês ${o.horario?`<span class="dot">•</span>${esc(intervalo(o))}`:''}</div></div></div><div class="occ-actions"><button class="linkbtn restore" data-action="restaurarOcc" data-ev="${o.eventoId}" data-data="${o.data}">Restaurar este dia</button></div></div>`; }
   const disp=disponiveis(o,atrib,occs);
   const emMov=!!movendo;
-  const chips=ids.map(id=>{ const conf=restritoNoDia(id,o.data); const pego=emMov&&movendo.occ===o.key&&movendo.id===id; return `<span class="chip ${conf?'conflito':''} ${pego?'pegando':''} ${emMov?'movel':''}" data-action="pegar" data-occ="${o.key}" data-id="${id}" title="${pego?'Clique para cancelar':emMov?'Clique para trocar com este':'Clique para mover ou trocar'}">${conf?ico('warn'):`<span class="mvh">${ico('swap')}</span>`}${esc(nomeMembro(id))}<button data-action="remSlot" data-occ="${o.key}" data-id="${id}" aria-label="Remover">×</button></span>`; }).join('');
+  const chips=ids.map(id=>{ const conf=restritoNaOcorrencia(id,o.data,o.eventoId); const pego=emMov&&movendo.occ===o.key&&movendo.id===id; return `<span class="chip ${conf?'conflito':''} ${pego?'pegando':''} ${emMov?'movel':''}" data-action="pegar" data-occ="${o.key}" data-id="${id}" title="${pego?'Clique para cancelar':emMov?'Clique para trocar com este':'Clique para mover ou trocar'}">${conf?ico('warn'):`<span class="mvh">${ico('swap')}</span>`}${esc(nomeMembro(id))}<button data-action="remSlot" data-occ="${o.key}" data-id="${id}" aria-label="Remover">×</button></span>`; }).join('');
   const dropBtn=(emMov&&movendo.occ!==o.key)?`<button class="drop-btn" data-action="soltarVaga" data-occ="${o.key}">${ico('plus')} Mover ${esc(nomeMembro(movendo.id))} para cá</button>`:'';
-  const restritosDia=db.membros.filter(m=>restritoNoDia(m.id,o.data));
+  const restritosDia=db.membros.filter(m=>restritoNaOcorrencia(m.id,o.data,o.eventoId));
   const vagas=falta>0?Array.from({length:falta}).map(()=>`<select class="chip-sel" data-change="addSlot" data-occ="${o.key}"><option value="">+ Vaga livre</option>${disp.map(m=>`<option value="${m.id}">${esc(m.nome)}</option>`).join('')}</select>`).join(''):'';
   const addExtra=(falta===0&&disp.length>0)?`<div class="addsel"><select class="add" data-change="addSlot" data-occ="${o.key}"><option value="">+ adicionar pessoa</option>${disp.map(m=>`<option value="${m.id}">${esc(m.nome)}</option>`).join('')}</select></div>`:'';
   const badge=falta>0?`<span class="badge miss">faltam ${falta}</span>`:`<span class="badge full">completo</span>`;
@@ -1068,23 +1208,57 @@ function painelMembros(){
         <button class="btn primary" data-action="salvarMembro">${ico(e?'check':'plus')} ${e?'Salvar alterações':'Adicionar'}</button>
         ${e?`<button class="btn ghost" data-action="cancelEdit" data-tab="membros">Cancelar</button>`:''}</div>
       <p class="hint" style="margin-top:8px">Digite o nome e tecle Enter — o foco continua aqui para você cadastrar vários em sequência.</p></div>
-    ${cadHead(db.membros.length)}${barraFiltro('membros','Buscar por nome, status, fase, nº de serviços...')}
+    ${cadHead(db.membros.length)}${barraFiltro('membros','Buscar por nome, fase ou nº de serviços...')}
+    <p class="hint" style="margin:-4px 0 10px">Clique numa coluna para ordenar · clique na linha para ver os serviços de cada período.</p>
     <div id="lista-membros">${listaMembros()}</div>`;
 }
+function iconeOrdem(col){ if(membrosSort.col!==col) return ''; return membrosSort.dir==='asc' ? ' ▲' : ' ▼'; }
 function listaMembros(){
   if(!db.membros.length) return vazio('users','Nenhum membro ainda','Use o formulário acima para começar a cadastrar.');
-  const totais=creditosTotais(); const q=norm(filtros.membros); const fases=db.fases||[];
+  const totais=creditosTotais(); const fases=db.fases||[];
   const fnome=m=>(fases.find(f=>f.id===m.faseId)||{}).nome||'';
-  const itens=db.membros.filter(m=>{ const txt=norm(`${m.nome} ${m.ativo?'ativo':'inativo'} ${totais[m.id]||0} servicos ${fnome(m)}`); return !q||txt.includes(q); });
-  if(!itens.length) return semResultado();
-  return itens.map(m=>{ const fn=fnome(m); return `<div class="row ${m.ativo?'':'muted-row'}">
+  const rAtual=rangeMesAtual(), rAnterior=rangeMesAnterior();
+  const linhas=db.membros.map(m=>({
+    m, fn:fnome(m),
+    atual: servicosDoMembroNoPeriodo(m.id, rAtual.ini, rAtual.fim).length,
+    anterior: servicosDoMembroNoPeriodo(m.id, rAnterior.ini, rAnterior.fim).length,
+    todos: totais[m.id]||0
+  }));
+  const q=norm(filtros.membros);
+  const filtradas=linhas.filter(l=>{ const txt=norm(`${l.m.nome} ${l.m.ativo?'ativo':'inativo'} ${l.fn} ${l.atual} ${l.anterior} ${l.todos}`); return !q||txt.includes(q); });
+  if(!filtradas.length) return semResultado();
+  const dir=membrosSort.dir==='asc'?1:-1;
+  filtradas.sort((a,b)=>{
+    let r=0;
+    if(membrosSort.col==='nome') r=a.m.nome.localeCompare(b.m.nome,'pt-BR');
+    else if(membrosSort.col==='fase') r=(a.fn||'').localeCompare(b.fn||'','pt-BR');
+    else r=a[membrosSort.col]-b[membrosSort.col];
+    return r*dir;
+  });
+  const head=`<div class="row mem-head">
+      <span class="sp-switch"></span>
+      <button class="th mem-col-nome" data-action="ordenarMembros" data-col="nome">Membro${iconeOrdem('nome')}</button>
+      <button class="th mem-col-fase" data-action="ordenarMembros" data-col="fase">Fase${iconeOrdem('fase')}</button>
+      <button class="th mem-col-num" data-action="ordenarMembros" data-col="atual">Mês Atual${iconeOrdem('atual')}</button>
+      <button class="th mem-col-num" data-action="ordenarMembros" data-col="anterior">Mês Anterior${iconeOrdem('anterior')}</button>
+      <button class="th mem-col-num" data-action="ordenarMembros" data-col="todos">Todos${iconeOrdem('todos')}</button>
+      <span class="sp-acoes">Ações</span>
+    </div>`;
+  const linhasHtml=filtradas.map(l=>{ const m=l.m; return `<div class="row ${m.ativo?'':'muted-row'}">
       <label class="switch"><input type="checkbox" data-change="ativo" data-id="${m.id}" ${m.ativo?'checked':''}><span class="slider"></span></label>
-      <div class="grow"><div class="name">${esc(m.nome)}</div><div class="meta">${m.ativo?'Ativo no rodízio':'Inativo'} · ${totais[m.id]||0} serviços${fn?` · <span class="meta-fase">${ico('layers')} ${esc(fn)}</span>`:''}</div></div>
+      <button class="mem-click" data-action="verMembro" data-id="${m.id}" title="Ver serviços deste membro">
+        <span class="mem-col-nome"><span class="name">${esc(m.nome)}</span>${!m.ativo?'<span class="tag-inativo">inativo</span>':''}</span>
+        <span class="mem-col-fase">${l.fn?esc(l.fn):'—'}</span>
+        <span class="mem-col-num">${l.atual}</span>
+        <span class="mem-col-num">${l.anterior}</span>
+        <span class="mem-col-num strong">${l.todos}</span>
+      </button>
       <select class="fase-sel" data-change="membroFase" data-id="${m.id}" title="Fase do membro"><option value="">Sem fase</option>${fases.map(f=>`<option value="${f.id}" ${m.faseId===f.id?'selected':''}>${esc(f.nome)}</option>`).join('')}</select>
-      <div class="field" style="width:auto"><input class="nummini" type="number" min="0" value="${db.ajustes[m.id]||0}" data-change="ajuste" data-id="${m.id}" title="Serviços anteriores"></div>
+      <div class="field" style="width:auto"><input class="nummini" type="number" min="0" value="${db.ajustes[m.id]||0}" data-change="ajuste" data-id="${m.id}" title="Serviços anteriores (baseline manual)"></div>
       <button class="iconbtn sm" data-action="editMembro" data-id="${m.id}" aria-label="Editar">${ico('edit')}</button>
       <button class="del" data-action="delMembro" data-id="${m.id}" aria-label="Excluir">${ico('trash')}</button>
     </div>`; }).join('');
+  return head+linhasHtml;
 }
 
 /* ---------- Locais ---------- */
@@ -1193,7 +1367,11 @@ function painelRestricoes(){
   if(restricaoCalAno==null){ restricaoCalAno=selAno; restricaoCalMes=selMes; }
   const temMembro=restricaoMembro&&db.membros.some(m=>m.id===restricaoMembro);
   const podeSalvar=temMembro&&restricoesPendentes.length>0;
-  const pend=restricoesPendentes.slice().sort().map(d=>{ const f=formatData(d); return `<span class="chip rest">${f.sem} ${f.dm}<button data-action="remDataPendente" data-data="${d}" aria-label="Remover">×</button></span>`; }).join('');
+  const pend=restricoesPendentes.slice().sort((a,b)=> a.data===b.data?(a.eventoId||'').localeCompare(b.eventoId||''):a.data.localeCompare(b.data)).map(p=>{
+    const f=formatData(p.data); const ev=p.eventoId?db.eventos.find(x=>x.id===p.eventoId):null;
+    const label=ev?`${f.sem} ${f.dm} · ${ev.tipo}`:`${f.sem} ${f.dm} · dia inteiro`;
+    return `<span class="chip rest">${esc(label)}<button data-action="remPendente" data-data="${p.data}" data-ev="${p.eventoId||''}" aria-label="Remover">×</button></span>`;
+  }).join('');
   const semMembros=db.membros.length===0;
   const noticeHtml=semMembros?`<div class="notice">${ico('warn')}<div>Cadastre os <strong>membros</strong> primeiro para registrar as restrições deles.</div></div>`:'';
   const marcarHtml=`<div class="card pad form-card">
@@ -1204,7 +1382,7 @@ function painelRestricoes(){
       ${pend?`<div class="pend-chips">${pend}</div>`:`<p class="hint" style="margin-top:10px">Nenhuma data marcada. Clique nos dias do calendário — use as setas para mudar de mês.</p>`}
       <div style="margin-top:14px"><button class="btn primary" data-action="salvarRestricoes" ${podeSalvar?'':'disabled'}>${ico('check')} Salvar ${restricoesPendentes.length?restricoesPendentes.length+' ':''}restrição(ões) para ${esc(nomeMembro(restricaoMembro))}</button></div>
       `:`<p class="hint" style="margin-top:12px">Escolha um membro acima para abrir o calendário e marcar as datas.</p>`}
-      <p class="hint" style="margin-top:8px">Restrição é regra absoluta: a pessoa nunca é escalada num dia indisponível.</p>
+      <p class="hint" style="margin-top:8px">Restrição é regra absoluta: a pessoa nunca é escalada. Num dia com mais de um serviço, você escolhe se bloqueia o <strong>dia inteiro</strong> ou só <strong>um serviço específico</strong> (ex.: não pode na Missa, mas pode no Grupo).</p>
     </div>`;
   const excelHtml=`<div class="exp-bar xls"><span class="lbl">${ico('save')} Planilha p/ os membros (${MESES[restricaoCalMes]} ${restricaoCalAno}):</span>
       <button class="btn ghost" data-action="exportarPlanilha">Exportar Excel</button>
@@ -1212,7 +1390,7 @@ function painelRestricoes(){
       <input type="file" id="imp-file" accept=".xlsx,.xls" data-import hidden>
       <span class="hint" style="margin:0">exporte → Drive → cada um marca → importe de volta</span>
     </div>
-    <p class="hint" style="margin-top:12px">Exporte a planilha do mês, compartilhe com o grupo (cada pessoa marca os dias em que não pode) e importe de volta — todas as restrições entram de uma vez.</p>`;
+    <p class="hint" style="margin-top:12px">Exporte a planilha do mês, compartilhe com o grupo (cada pessoa marca os dias em que não pode) e importe de volta — todas as restrições entram de uma vez (sempre como dia inteiro; para restrição por evento específico, use o calendário).</p>`;
   const listHtml=`${cadHead(db.restricoes.length)}${barraFiltro('restricoes','Buscar por membro ou data (ex.: 18/07)...')}<div id="lista-restricoes">${listaRestricoes()}</div>`;
   const sub=`<div class="subtabs">${subTab('restricoes','marcar','ban','Marcar')}${subTab('restricoes','cadastradas','check','Cadastradas ('+db.restricoes.length+')')}${subTab('restricoes','disponib','users','Disponib.')}${subTab('restricoes','excel','save','Excel')}</div>`;
   const cur=subAba.restricoes;
@@ -1222,28 +1400,53 @@ function painelRestricoes(){
 function calRestricoes(){
   const ano=restricaoCalAno, mes=restricaoCalMes;
   const total=diasDoMes(ano,mes); const first=new Date(ano,mes,1).getDay(); const hoje=hojeISO();
+  const occsMes=construirOccs(ano,mes).filter(o=>!o.cancelada);
+  const porDia={}; occsMes.forEach(o=>{ (porDia[o.data]=porDia[o.data]||[]).push(o); });
   let cells=DSEMA.map(d=>`<div class="cal-dow">${d}</div>`).join('');
   for(let i=0;i<first;i++) cells+=`<div class="cal-empty"></div>`;
   for(let d=1;d<=total;d++){ const ds=iso(ano,mes,d);
-    const saved=db.restricoes.some(r=>r.membroId===restricaoMembro&&r.data===ds);
-    const pend=restricoesPendentes.includes(ds); const today=ds===hoje;
-    const cls=['cal-day']; if(saved)cls.push('saved'); if(pend)cls.push('pend'); if(today)cls.push('today');
-    const attrs=saved?'':`data-action="toggleDiaRestricao" data-data="${ds}"`;
-    cells+=`<div class="${cls.join(' ')}" ${attrs}>${d}</div>`; }
+    const evsDia=porDia[ds]||[];
+    const restrs=db.restricoes.filter(r=>r.membroId===restricaoMembro&&r.data===ds);
+    const diaInteiroSalvo=restrs.some(r=>!r.eventoId);
+    const bloqueadosSet=new Set(restrs.filter(r=>r.eventoId).map(r=>r.eventoId));
+    const completo=diaInteiroSalvo||(evsDia.length>0&&evsDia.every(o=>bloqueadosSet.has(o.eventoId)));
+    const parcial=!completo&&(diaInteiroSalvo||bloqueadosSet.size>0);
+    const pend=restricoesPendentes.some(p=>p.data===ds); const today=ds===hoje; const aberto=restricaoDataAberta===ds;
+    const cls=['cal-day']; if(completo)cls.push('saved'); if(parcial)cls.push('parcial'); if(pend)cls.push('pend'); if(today)cls.push('today'); if(aberto)cls.push('aberto');
+    cells+=`<div class="${cls.join(' ')}" data-action="cliqueDiaRestricao" data-data="${ds}">${d}</div>`; }
+  const seletor=restricaoDataAberta?seletorEventosDia(restricaoDataAberta, porDia[restricaoDataAberta]||[]):'';
   return `<div class="cal-mini"><div class="cal-top"><button class="iconbtn sm" data-action="calPrev" aria-label="Mês anterior">${ico('chevL')}</button><div class="cal-month">${MESES[mes]} ${ano}</div><button class="iconbtn sm" data-action="calNext" aria-label="Próximo mês">${ico('chevR')}</button></div>
   <div class="cal-grid">${cells}</div>
-  <div class="cal-legend"><span><i class="lg pend"></i> marcada (vai salvar)</span><span><i class="lg saved"></i> já é restrição</span></div></div>`;
+  <div class="cal-legend"><span><i class="lg pend"></i> marcada (vai salvar)</span><span><i class="lg parcial"></i> restrito em parte</span><span><i class="lg saved"></i> restrito o dia todo</span></div>
+  ${seletor}</div>`;
+}
+function seletorEventosDia(ds, evsDia){
+  const f=formatData(ds);
+  const restrs=db.restricoes.filter(r=>r.membroId===restricaoMembro&&r.data===ds);
+  const diaInteiroSalvo=restrs.some(r=>!r.eventoId);
+  const chipDia=`<span class="chip sel-chip ${restricaoDiaInteiro?'on':''}" data-action="toggleChipDiaInteiro">${diaInteiroSalvo?ico('check')+' ':''}Dia inteiro</span>`;
+  const chipsEv=evsDia.map(o=>{
+    const jaSalvo=diaInteiroSalvo||restrs.some(r=>r.eventoId===o.eventoId);
+    const sel=restricaoEventosSel.has(o.eventoId);
+    return `<span class="chip sel-chip ${sel?'on':''}" data-action="toggleChipEvento" data-ev="${o.eventoId}">${jaSalvo?ico('check')+' ':''}${esc(o.tipo)}${o.horario?` ${o.horario}`:''}</span>`;
+  }).join('');
+  return `<div class="dia-seletor">
+      <div class="hint" style="margin:0 0 8px"><strong style="color:var(--ink)">${f.semFull}, ${f.dm}</strong> — bloquear o dia inteiro ou só um serviço?</div>
+      <div class="chips-wrap">${chipDia}${chipsEv}</div>
+      <div style="margin-top:10px;display:flex;gap:8px"><button class="btn primary sm" data-action="confirmarSelecaoDia">${ico('plus')} Adicionar à lista</button><button class="btn ghost sm" data-action="cancelarSeletorDia">Cancelar</button></div>
+    </div>`;
 }
 function listaRestricoes(){
   if(!db.restricoes.length) return vazio('ban','Nenhuma restrição','Escolha um membro acima e marque as datas no calendário.');
   const q=norm(filtros.restricoes);
   const porMembro={}; db.restricoes.forEach(r=>{ (porMembro[r.membroId]=porMembro[r.membroId]||[]).push(r); });
   const ids=Object.keys(porMembro).sort((a,b)=>nomeMembro(a).localeCompare(nomeMembro(b)));
-  const cards=ids.map(mid=>{ const nome=nomeMembro(mid); const datas=porMembro[mid].slice().sort((a,b)=>a.data.localeCompare(b.data));
-    const texto=norm(nome+' '+datas.map(r=>{ const f=formatData(r.data); return f.semFull+' '+f.dmy; }).join(' '));
+  const cards=ids.map(mid=>{ const nome=nomeMembro(mid); const datas=porMembro[mid].slice().sort((a,b)=>a.data===b.data?0:a.data.localeCompare(b.data));
+    const rotulo=r=>{ const ev=r.eventoId?db.eventos.find(x=>x.id===r.eventoId):null; return ev?ev.tipo:'dia inteiro'; };
+    const texto=norm(nome+' '+datas.map(r=>{ const f=formatData(r.data); return f.semFull+' '+f.dmy+' '+rotulo(r); }).join(' '));
     if(q&&!texto.includes(q)) return '';
-    const chips=datas.map(r=>{ const f=formatData(r.data); return `<span class="chip rest">${f.sem} ${f.dm}<button data-action="delRestricao" data-id="${r.id}" aria-label="Remover">×</button></span>`; }).join('');
-    return `<div class="row" style="align-items:flex-start"><div class="grow"><div class="name">${esc(nome)} <span class="muted" style="font-weight:500">· ${datas.length} data(s)</span></div><div class="chips" style="margin-top:8px;padding-left:0">${chips}</div></div><button class="iconbtn sm" data-action="addMaisRestricoes" data-mid="${mid}" aria-label="Adicionar mais" title="Adicionar mais datas">${ico('plus')}</button></div>`;
+    const chips=datas.map(r=>{ const f=formatData(r.data); return `<span class="chip rest">${f.sem} ${f.dm} · ${esc(rotulo(r))}<button data-action="delRestricao" data-id="${r.id}" aria-label="Remover">×</button></span>`; }).join('');
+    return `<div class="row" style="align-items:flex-start"><div class="grow"><div class="name">${esc(nome)} <span class="muted" style="font-weight:500">· ${datas.length} restrição(ões)</span></div><div class="chips" style="margin-top:8px;padding-left:0">${chips}</div></div><button class="iconbtn sm" data-action="addMaisRestricoes" data-mid="${mid}" aria-label="Adicionar mais" title="Adicionar mais datas">${ico('plus')}</button></div>`;
   }).join('');
   return cards.trim()?cards:semResultado();
 }
@@ -1286,7 +1489,7 @@ function atualizarLista(tab){ const map={membros:['lista-membros',listaMembros],
 /* ---------- Listeners delegados (anexados uma vez) ---------- */
 document.addEventListener('click', e=>{
   const el=e.target.closest('[data-action]'); if(!el) return; const a=el.getAttribute('data-action');
-  const id=el.getAttribute('data-id'), occ=el.getAttribute('data-occ'), ev=el.getAttribute('data-ev'), data=el.getAttribute('data-data'), tab=el.getAttribute('data-tab'), t=el.getAttribute('data-t'), mid=el.getAttribute('data-mid'), modo=el.getAttribute('data-modo');
+  const id=el.getAttribute('data-id'), occ=el.getAttribute('data-occ'), ev=el.getAttribute('data-ev'), data=el.getAttribute('data-data'), tab=el.getAttribute('data-tab'), t=el.getAttribute('data-t'), mid=el.getAttribute('data-mid'), modo=el.getAttribute('data-modo'), col=el.getAttribute('data-col');
   switch(a){
     case 'tema': alternarTema(); break;
     case 'cancelarConfirmacao': cancelarConfirmacao(); break;
@@ -1296,6 +1499,11 @@ document.addEventListener('click', e=>{
     case 'mesPrev': navMes(-1); break;
     case 'mesNext': navMes(1); break;
     case 'gerar': gerar(); break;
+    case 'zerarEscala': zerarEscala(); break;
+    case 'ordenarMembros': ordenarMembros(col); break;
+    case 'verMembro': verMembro(id); break;
+    case 'membroDetalheAba': membroDetalheAba(id, modo); break;
+    case 'fecharMembroDetalhe': fecharMembroDetalhe(); break;
     case 'salvarEscala': salvarEscala(); break;
     case 'pdf': exportarPDF(modo); break;
     case 'baixarPdf': exportarPDF(modo); break;
@@ -1336,11 +1544,15 @@ document.addEventListener('click', e=>{
     case 'editTipo': edit.tipos=t; render(); break;
     case 'delTipo': delTipo(t); break;
     case 'salvarRestricoes': salvarRestricoes(); break;
+    case 'cliqueDiaRestricao': cliqueDiaRestricao(data); break;
+    case 'toggleChipDiaInteiro': toggleChipDiaInteiro(); break;
+    case 'toggleChipEvento': toggleChipEvento(ev); break;
+    case 'confirmarSelecaoDia': confirmarSelecaoDia(); break;
+    case 'cancelarSeletorDia': cancelarSeletorDia(); break;
+    case 'remPendente': remPendente(data, ev); break;
     case 'puxarDisponibilidades': puxarDisponibilidades(); break;
     case 'addMaisRestricoes': addMaisRestricoes(mid); break;
     case 'delRestricao': delRestricao(id); break;
-    case 'remDataPendente': remDataPendente(data); break;
-    case 'toggleDiaRestricao': toggleDiaRestricao(data); break;
     case 'calPrev': calNav(-1); break;
     case 'calNext': calNav(1); break;
     case 'exportarPlanilha': exportarPlanilha(); break;
@@ -1746,7 +1958,7 @@ function painelManual(){
 function occByKey(k){ return construirOccs(selAno,selMes).find(o=>o.key===k); }
 function podeMoverPara(id, occDest, keyDest, keyOrigem){
   if(!occDest) return {ok:false, msg:'Serviço indisponível'};
-  if(restritoNoDia(id,occDest.data)) return {ok:false, msg:`${nomeMembro(id)} tem restrição em ${formatData(occDest.data).dm}`};
+  if(restritoNaOcorrencia(id,occDest.data,occDest.eventoId)) return {ok:false, msg:`${nomeMembro(id)} tem restrição em ${formatData(occDest.data).dm}`};
   if(!elegivelNoEvento(id,occDest)) return {ok:false, msg:`${nomeMembro(id)} não está liberado para servir nesse serviço`};
   const ea=garantirEscalaAtual();
   for(const o of construirOccs(selAno,selMes)){ if(o.key===keyDest||o.key===keyOrigem) continue; if(o.data===occDest.data&&(ea.atribuicoes[o.key]||[]).includes(id)) return {ok:false, msg:`${nomeMembro(id)} já serve em ${formatData(occDest.data).dm} (máx. 1 por dia)`}; }
@@ -1780,7 +1992,15 @@ function soltarVaga(occKey){
 }
 /* ---------- Fases ---------- */
 function restritoNoDia(membroId, data){
-  if(db.restricoes.some(r=>r.membroId===membroId&&r.data===data)) return true;
+  if(db.restricoes.some(r=>r.membroId===membroId&&r.data===data&&!r.eventoId)) return true;
+  const m=db.membros.find(x=>x.id===membroId);
+  if(m&&m.faseId){ const fa=(db.fases||[]).find(x=>x.id===m.faseId); if(fa&&(fa.datas||[]).includes(data)) return true; }
+  return false;
+}
+/* Igual a restritoNoDia, mas também considera restrições marcadas só para ESTE evento
+   (ex.: "não posso na Missa de sábado 17h" não bloqueia o Grupo das Famílias do mesmo sábado). */
+function restritoNaOcorrencia(membroId, data, eventoId){
+  if(db.restricoes.some(r=>r.membroId===membroId&&r.data===data&&(!r.eventoId||r.eventoId===eventoId))) return true;
   const m=db.membros.find(x=>x.id===membroId);
   if(m&&m.faseId){ const fa=(db.fases||[]).find(x=>x.id===m.faseId); if(fa&&(fa.datas||[]).includes(data)) return true; }
   return false;
